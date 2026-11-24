@@ -125,6 +125,7 @@ struct App {
     bool showRx = true, showTx = true;   // the columns
     VideoPopout popout;
     bool wantPopout = false, hidden = false;
+    std::string narrowNote;   // which column the window is too narrow for
     // tuning: where it was (Cmd+Z), the last frequencies used (Recent), the undo chip after a click on the spectrum, a range note
     std::vector<double> tuneHistory, recent;   // MHz
     double chipUntil = 0, chipFromMHz = 0, freqBeforeEdit = 0, noteUntil = 0;
@@ -527,6 +528,14 @@ void onAirBand(App& a) {
     if (onAir) ImGui::SetItemTooltip("This Mac's HackRF is transmitting on %.4f MHz", a.txFreqMHz);
 }
 
+// A small button that is still a 24 px target (ImGui's SmallButton is about 15 px tall).
+bool chipButton(const char* label) {
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4.5f));
+    const bool pressed = ImGui::Button(label);
+    ImGui::PopStyleVar();
+    return pressed;
+}
+
 void drawConstellation(const std::vector<kavl::cf>& pts, float size) {
     const ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + size, p0.y + size);
     auto* dl = ImGui::GetWindowDrawList();
@@ -669,7 +678,7 @@ void drawVideo(App& a, ImVec2 size, bool hint) {
         const ImVec2 after = ImGui::GetCursorScreenPos();
         const char* lbl = a.popout.isOpen() ? "Close own window" : "Own window";
         ImGui::SetCursorScreenPos(ImVec2(p0.x + size.x - ImGui::CalcTextSize(lbl).x - 20, p0.y + 8));
-        if (ImGui::SmallButton(lbl)) a.wantPopout = !a.popout.isOpen();
+        if (chipButton(lbl)) a.wantPopout = !a.popout.isOpen();
         ImGui::SetItemTooltip("The picture in a window of its own (P), e.g. for a second screen. There: F or double-click for full screen, Esc to close");
         ImGui::SetCursorScreenPos(after);
     }
@@ -693,7 +702,7 @@ void drawSpectrum(App& a, ImVec2 size) {
         char t[64];
         std::snprintf(t, sizeof(t), "Back to %.4f MHz", a.chipFromMHz);
         ImGui::SetCursorScreenPos(ImVec2(at.x + 46, at.y + 6));
-        if (ImGui::SmallButton(t)) {
+        if (chipButton(t)) {
             a.chipUntil = 0;
             undoTune(a);
         }
@@ -867,7 +876,7 @@ void receivePanel(App& a, float w, float h) {
             if (actionButton(a, lbl, Action::OnAir)) a.rx.stopRecording();
         }
         if (!a.rx.recordingPath().empty() && !a.rx.recording()) {
-            if (ImGui::SmallButton("Show the recording in Finder")) {
+            if (chipButton("Show the recording in Finder")) {
                 const std::string cmd = "open -R '" + a.rx.recordingPath() + "'";
                 std::system(cmd.c_str());
             }
@@ -1189,6 +1198,10 @@ void statusBar(App& a) {
     }
     if (ps.delaySec >= 0) part(pal::accent(), "Delay %.2f s", ps.delaySec);
     if (a.rx.running() && st.speed > 0) part(st.speed < 1.0 ? pal::badRed() : pal::grey(), "Decoder %.2fx", st.speed);
+    if (!a.narrowNote.empty()) {
+        ImGui::TextDisabled("%s", a.narrowNote.c_str());
+        ImGui::SameLine(0, 24);
+    }
     ImGui::NewLine();
 }
 
@@ -1327,12 +1340,23 @@ void frame(App& a) {
     // the station: Receive on the left, the picture and the spectrum in the middle, Transmit on the right, the status line at the bottom
     const float statusH = ImGui::GetFrameHeightWithSpacing() + 4;
     const float h = ImGui::GetContentRegionAvail().y - statusH;
-    const float leftW = 300, rightW = 330, gap = ImGui::GetStyle().ItemSpacing.x;
-    if (a.showRx) {
+    // The columns scale with the window; when the picture would get narrower than 520 px, a column that is not in use gives way (Transmit
+    // first). A running column never hides: it holds its Stop. The status line says what was hidden.
+    const float total = ImGui::GetContentRegionAvail().x, gap = ImGui::GetStyle().ItemSpacing.x, minMid = 520.f;
+    const float leftW = std::clamp(total * 0.2f, 250.f, 300.f), rightW = std::clamp(total * 0.22f, 270.f, 330.f);
+    bool showRx = a.showRx, showTx = a.showTx;
+    auto midOf = [&]() { return total - (showRx ? leftW + gap : 0.f) - (showTx ? rightW + gap : 0.f); };
+    if (midOf() < minMid && showTx && !a.tx.running() && !a.tx.preparing()) showTx = false;
+    if (midOf() < minMid && showRx && !a.rx.running()) showRx = false;
+    a.narrowNote = !(showTx == a.showTx && showRx == a.showRx)
+                       ? std::string("Window too narrow: ") + (showTx != a.showTx && showRx != a.showRx ? "Receive and Transmit" : showTx != a.showTx ? "Transmit" : "Receive") +
+                             " hidden (widen the window to show)"
+                       : std::string();
+    if (showRx) {
         receivePanel(a, leftW, h);
         ImGui::SameLine();
     }
-    const float midW = ImGui::GetContentRegionAvail().x - (a.showTx ? rightW + gap : 0.f);
+    const float midW = ImGui::GetContentRegionAvail().x - (showTx ? rightW + gap : 0.f);
     ImGui::BeginChild("##main", ImVec2(midW, h), 0, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     const ImVec2 av = ImGui::GetContentRegionAvail();
     const float specH = std::clamp(av.y * (a.specView.waterfall ? 0.36f : 0.2f), 140.f, 460.f);
@@ -1342,7 +1366,7 @@ void frame(App& a) {
     a.specView.options();
     drawSpectrum(a, ImVec2(av.x, ImGui::GetContentRegionAvail().y));
     ImGui::EndChild();
-    if (a.showTx) {
+    if (showTx) {
         ImGui::SameLine();
         transmitPanel(a, rightW, h);
     }
@@ -1384,6 +1408,7 @@ int main(int argc, char** argv) {
     bool hidden = false, mute = false, loopback = false, report = false, popoutArg = false;
     int profile = -1, tab = -1, fecArg = -1;
     double runFor = 0, gapStop = 0, gapStart = 0;
+    int winW = 1600, winH = 950;   // --size WxH (checks at other window sizes)
     int gapProfile = -1;
     std::vector<std::pair<double, double>> retunes;   // --retune T:MHz: the receive frequency at T s   // --tx-gap A:B[:P]: the loopback transmitter stops at A s and starts again at B s (with profile P)
     for (int i = 1; i < argc; i++) {
@@ -1400,6 +1425,7 @@ int main(int argc, char** argv) {
         else if (k == "--fec") fecArg = std::clamp(std::atoi(val().c_str()), 0, kavl::fec::kNumProfiles - 1);
         else if (k == "--report") report = true;
         else if (k == "--popout") popoutArg = true;
+        else if (k == "--size") std::sscanf(val().c_str(), "%dx%d", &winW, &winH);
         else if (k == "--run-for") runFor = std::atof(val().c_str());
         else if (k == "--tx-gap") std::sscanf(val().c_str(), "%lf:%lf:%d", &gapStop, &gapStart, &gapProfile);
         else if (k == "--retune") {   // T:MHz, may be given more than once
@@ -1413,8 +1439,9 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     if (hidden) glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    GLFWwindow* w = glfwCreateWindow(1600, 950, "KAVL", nullptr, nullptr);
+    GLFWwindow* w = glfwCreateWindow(winW, winH, "KAVL", nullptr, nullptr);
     if (!w) return 1;
+    glfwSetWindowSizeLimits(w, 960, 600, GLFW_DONT_CARE, GLFW_DONT_CARE);   // below this the station no longer fits
     glfwMakeContextCurrent(w);
     glfwSwapInterval(1);
     IMGUI_CHECKVERSION();

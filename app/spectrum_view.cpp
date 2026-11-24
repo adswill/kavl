@@ -105,8 +105,10 @@ void SpectrumView::options() {
     ImGui::Checkbox("Waterfall", &waterfall);
     ImGui::SetItemTooltip("The history of the spectrum below it");
     if (lo_ > 0.f || hi_ < 1.f) {
-        flow(ImGui::CalcTextSize("Whole span").x + 2 * ImGui::GetStyle().FramePadding.x);
-        if (ImGui::SmallButton("Whole span")) lo_ = 0.f, hi_ = 1.f;
+        flow(ImGui::CalcTextSize("Whole span").x + 16);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4.5f));   // a 24 px target
+        if (ImGui::Button("Whole span")) lo_ = 0.f, hi_ = 1.f;
+        ImGui::PopStyleVar();
         ImGui::SetItemTooltip("Zoom out (or double-click the spectrum)");
     }
 }
@@ -181,7 +183,8 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
         char t[16];
         std::snprintf(t, sizeof(t), "%.0f", g);
         const ImVec2 ts = ImGui::CalcTextSize(t);
-        if (y - ts.y * 0.5f > s0.y && y + ts.y * 0.5f < s1.y) dl->AddText(ImVec2(plotX0 - ts.x - 5, y - ts.y * 0.5f), label, t);
+        // clear of the "dB" caption at the top
+        if (y - ts.y * 0.5f > s0.y + ts.y && y + ts.y * 0.5f < s1.y) dl->AddText(ImVec2(plotX0 - ts.x - 5, y - ts.y * 0.5f), label, t);
     }
     dl->AddText(ImVec2(o.x + 2, s0.y + 2), label, "dB");
     // frequency axis: ticks and MHz labels, and the grid through the spectrum
