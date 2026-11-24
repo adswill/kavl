@@ -83,7 +83,8 @@ void SpectrumView::options() {
         if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + w <= right) ImGui::SameLine();
     };
     auto boxW = [](const char* l) { return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(l).x; };
-    ImGui::SetNextItemWidth(120);
+    const float k = ImGui::GetStyle().FontScaleMain;
+    ImGui::SetNextItemWidth(120 * k);
     ImGui::SliderFloat("##avg", &avg_, 0.f, 0.95f, "Averaging %.2f");
     ImGui::SetItemTooltip("Smooths the spectrum line: 0 shows each measurement as it comes, 0.95 a long average");
     flow(boxW("Peak hold"));
@@ -93,12 +94,12 @@ void SpectrumView::options() {
     ImGui::Checkbox("Auto range", &autoRange_);
     ImGui::SetItemTooltip("The dB range follows the noise floor and the strongest signal. Off: set it with the two sliders");
     if (!autoRange_) {
-        flow(110);
-        ImGui::SetNextItemWidth(110);
+        flow(110 * k);
+        ImGui::SetNextItemWidth(110 * k);
         ImGui::SliderFloat("##min", &minDb_, -140.f, maxDb_ - 5.f, "Min %.0f dB");
         ImGui::SetItemTooltip("The level at the bottom of the spectrum and the darkest waterfall colour");
-        flow(110);
-        ImGui::SetNextItemWidth(110);
+        flow(110 * k);
+        ImGui::SetNextItemWidth(110 * k);
         ImGui::SliderFloat("##max", &maxDb_, minDb_ + 5.f, 20.f, "Max %.0f dB");
         ImGui::SetItemTooltip("The level at the top of the spectrum and the brightest waterfall colour");
     }
@@ -164,7 +165,8 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
     const float dbLo = autoRange_ ? autoLo_ : minDb_, dbHi = autoRange_ ? autoHi_ : maxDb_;
     auto* dl = ImGui::GetWindowDrawList();
     const ImVec2 o = ImGui::GetCursorScreenPos();
-    const float scaleW = 38.f, axisH = 18.f, splitH = 6.f;
+    const float k = ImGui::GetStyle().FontScaleMain;   // the gutters hold text: they grow with the text size
+    const float scaleW = 38.f * k, axisH = 18.f * k, splitH = 6.f;
     const float plotX0 = o.x + scaleW, plotW = std::max(10.f, size.x - scaleW);
     const float avail = size.y - axisH - (waterfall ? splitH : 0.f);
     const float specH = waterfall ? std::max(30.f, avail * split_) : avail;

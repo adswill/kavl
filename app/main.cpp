@@ -60,6 +60,9 @@ double thresholdDb(const kavl::Modcod* m) {
     return 10.0 * std::log10(std::pow(2.0, bits) - 1.0) + 2.5;
 }
 
+// A layout length that sits next to text grows with the text size (View > Text size).
+float px(float v) { return v * ImGui::GetStyle().FontScaleMain; }
+
 // The macOS file dialog (osascript), on a thread; the result is picked up by poll().
 struct FileChooser {
     std::mutex m;
@@ -126,6 +129,7 @@ struct App {
     VideoPopout popout;
     bool wantPopout = false, hidden = false;
     std::string narrowNote;   // which column the window is too narrow for
+    float textScale = 1.f;    // View > Text size: 0.9, 1, 1.15, 1.3
     // tuning: where it was (Cmd+Z), the last frequencies used (Recent), the undo chip after a click on the spectrum, a range note
     std::vector<double> tuneHistory, recent;   // MHz
     double chipUntil = 0, chipFromMHz = 0, freqBeforeEdit = 0, noteUntil = 0;
@@ -212,6 +216,7 @@ void loadSettings(App& a) {
     a.microphoneName = c.str("tx.microphoneName");
     a.specView.load(c);
     a.showRx = c.flag("view.showRx", true);
+    a.textScale = std::clamp(static_cast<float>(c.num("view.textScale", 1.0)), 0.9f, 1.3f);
     a.showTx = c.flag("view.showTx", true);
 }
 
@@ -258,6 +263,7 @@ void saveSettings(App& a) {
     c.set("tx.microphoneName", a.microphoneName);
     a.specView.save(c);
     c.set("view.showRx", a.showRx);
+    c.set("view.textScale", static_cast<double>(a.textScale));
     c.set("view.showTx", a.showTx);
     c.save();
 }
@@ -478,7 +484,7 @@ void valueRow(App& a, const char* label, const char* fmt, ...) {
     std::vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     ImGui::TextDisabled("%s", label);
-    ImGui::SameLine(110);
+    ImGui::SameLine(px(110));
     ImGui::PushFont(a.mono);
     ImGui::TextUnformatted(buf);
     ImGui::PopFont();
@@ -518,7 +524,7 @@ void onAirBand(App& a) {
     else std::snprintf(t, sizeof(t), "%s  \xC2\xB7  %.4f MHz", onAir ? "ON AIR" : "LOOPBACK", a.txFreqMHz);
     auto* dl = ImGui::GetWindowDrawList();
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
-    const float w = ImGui::GetContentRegionAvail().x, h = onAir ? 36.f : 26.f;
+    const float w = ImGui::GetContentRegionAvail().x, h = px(onAir ? 36.f : 26.f);
     dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), ImGui::GetColorU32(onAir ? pal::badRed() : ImGui::GetStyleColorVec4(ImGuiCol_Header)), 3.f);
     ImGui::PushFont(onAir ? a.big : a.bold);
     const ImVec2 ts = ImGui::CalcTextSize(t);
@@ -571,7 +577,7 @@ void tryLoopback(App& a) {
 void pictureEmptyState(App& a, ImVec2 p0, ImVec2 size) {
     auto* dl = ImGui::GetWindowDrawList();
     const ImU32 strong = ImGui::GetColorU32(ImGuiCol_Text), muted = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    const float colW = std::min(440.f, size.x - 40.f);
+    const float colW = std::min(px(440), size.x - 40.f);
     const float x0 = p0.x + (size.x - colW) * 0.5f;
     auto lineH = [](ImFont* f) {
         ImGui::PushFont(f);
@@ -723,10 +729,10 @@ void radioSettings(App& a) {
     }
     // the frequency and the gains follow at once while receiving; the device choice waits for a stop
     auto freqInput = [&]() {
-        ImGui::SetNextItemWidth(-72);
+        ImGui::SetNextItemWidth(-px(72));
         const double shown = a.freqMHz;
         // a narrow column drops the last digit rather than clip the unit
-        const char* ffmt = ImGui::GetContentRegionAvail().x - 72 < 150 ? "%.3f MHz" : "%.4f MHz";
+        const char* ffmt = ImGui::GetContentRegionAvail().x - px(72) < px(150) ? "%.3f MHz" : "%.4f MHz";
         if (ImGui::InputDouble("##freq", &a.freqMHz, 0.1, 1.0, ffmt)) {
             const double typed = a.freqMHz;
             a.freqMHz = shown;
@@ -1257,6 +1263,7 @@ void frame(App& a) {
     uploadPicture(a);
     updateSpectrum(a);
     takeDevices(a);
+    ImGui::GetStyle().FontScaleMain = a.textScale;   // takes effect from the next frame's layout
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->Pos);
@@ -1295,6 +1302,15 @@ void frame(App& a) {
             if (ImGui::MenuItem("Own window", "P", a.popout.isOpen())) a.wantPopout = !a.popout.isOpen();
             ImGui::Separator();
             ImGui::MenuItem("Waterfall", nullptr, &a.specView.waterfall);
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Text size")) {   // for a small screen, outdoors, or tired eyes
+                static const float sizes[] = {0.9f, 1.f, 1.15f, 1.3f};
+                static const char* names[] = {"Small", "Normal", "Large", "Larger"};
+                for (int i = 0; i < 4; i++)
+                    if (ImGui::MenuItem(names[i], i == 1 ? "Cmd+0" : nullptr, std::abs(a.textScale - sizes[i]) < 0.01f)) a.textScale = sizes[i];
+                ImGui::TextDisabled("Cmd+= and Cmd+- step");
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Radio")) {
@@ -1328,6 +1344,15 @@ void frame(App& a) {
         if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_1)) a.showRx = !a.showRx;
         if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_2)) a.showTx = !a.showTx;
         if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_Z, false)) undoTune(a);
+        {   // text size: Cmd+= larger, Cmd+- smaller, Cmd+0 normal
+            static const float sizes[] = {0.9f, 1.f, 1.15f, 1.3f};
+            int cur = 1;
+            for (int i = 0; i < 4; i++)
+                if (std::abs(a.textScale - sizes[i]) < 0.01f) cur = i;
+            if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_Equal, false)) a.textScale = sizes[std::min(3, cur + 1)];
+            if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_Minus, false)) a.textScale = sizes[std::max(0, cur - 1)];
+            if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_0, false)) a.textScale = 1.f;
+        }
         // tuning steps on [ and ] (the arrows belong to keyboard navigation)
         const double step = io.KeyShift ? 0.05 : 0.005;
         if (!io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) setRxFrequency(a, (a.freqMHz - step) * 1e6, Tune::Key);
@@ -1344,8 +1369,8 @@ void frame(App& a) {
     const float h = ImGui::GetContentRegionAvail().y - statusH;
     // The columns scale with the window; when the picture would get narrower than 520 px, a column that is not in use gives way (Transmit
     // first). A running column never hides: it holds its Stop. The status line says what was hidden.
-    const float total = ImGui::GetContentRegionAvail().x, gap = ImGui::GetStyle().ItemSpacing.x, minMid = 520.f;
-    const float leftW = std::clamp(total * 0.2f, 250.f, 300.f), rightW = std::clamp(total * 0.22f, 270.f, 330.f);
+    const float total = ImGui::GetContentRegionAvail().x, gap = ImGui::GetStyle().ItemSpacing.x, minMid = px(520);
+    const float leftW = std::clamp(total * 0.2f * a.textScale, px(250), px(300)), rightW = std::clamp(total * 0.22f * a.textScale, px(270), px(330));
     bool showRx = a.showRx, showTx = a.showTx;
     auto midOf = [&]() { return total - (showRx ? leftW + gap : 0.f) - (showTx ? rightW + gap : 0.f); };
     if (midOf() < minMid && showTx && !a.tx.running() && !a.tx.preparing()) showTx = false;
@@ -1361,7 +1386,7 @@ void frame(App& a) {
     const float midW = ImGui::GetContentRegionAvail().x - (showTx ? rightW + gap : 0.f);
     ImGui::BeginChild("##main", ImVec2(midW, h), 0, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     const ImVec2 av = ImGui::GetContentRegionAvail();
-    const float specH = std::clamp(av.y * (a.specView.waterfall ? 0.36f : 0.2f), 140.f, 460.f);
+    const float specH = std::clamp(av.y * (a.specView.waterfall ? 0.36f : 0.2f), px(140), px(460));
     const float rowH = ImGui::GetFrameHeightWithSpacing();
     drawVideo(a, ImVec2(av.x, av.y - specH - rowH - 6), true);
     ImGui::Dummy(ImVec2(0, 2));
@@ -1411,6 +1436,7 @@ int main(int argc, char** argv) {
     int profile = -1, tab = -1, fecArg = -1;
     double runFor = 0, gapStop = 0, gapStart = 0;
     int winW = 1600, winH = 950;   // --size WxH (checks at other window sizes)
+    float textScaleArg = 0;        // --text-scale F (checks)
     int gapProfile = -1;
     std::vector<std::pair<double, double>> retunes;   // --retune T:MHz: the receive frequency at T s   // --tx-gap A:B[:P]: the loopback transmitter stops at A s and starts again at B s (with profile P)
     for (int i = 1; i < argc; i++) {
@@ -1428,6 +1454,7 @@ int main(int argc, char** argv) {
         else if (k == "--report") report = true;
         else if (k == "--popout") popoutArg = true;
         else if (k == "--size") std::sscanf(val().c_str(), "%dx%d", &winW, &winH);
+        else if (k == "--text-scale") textScaleArg = static_cast<float>(std::atof(val().c_str()));
         else if (k == "--run-for") runFor = std::atof(val().c_str());
         else if (k == "--tx-gap") std::sscanf(val().c_str(), "%lf:%lf:%d", &gapStop, &gapStart, &gapProfile);
         else if (k == "--retune") {   // T:MHz, may be given more than once
@@ -1460,6 +1487,7 @@ int main(int argc, char** argv) {
     if (profile >= 0) app.profile = app.txProfile = profile;
     if (tab == 1) app.showTx = true;   // --tab tx: the transmit column on show (both are, on the combined screen)
     app.hidden = hidden;
+    if (textScaleArg > 0) app.textScale = std::clamp(textScaleArg, 0.9f, 1.3f);
     app.wantPopout = popoutArg;
     app.player.setVolume(mute ? 0.f : app.volume);
     if (mute) app.volume = 0;

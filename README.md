@@ -92,6 +92,7 @@ The frequency, the gains, the amplifier, the bias tee and the ppm correction cha
 | [ and ] | Receive frequency 5 kHz down, up (Shift: 50 kHz) |
 | Cmd+Z | Back to the frequency before the last retune |
 | Tab, arrows, Space or Return | Move between the controls and press them (keyboard only) |
+| Cmd+=, Cmd+-, Cmd+0 | Larger, smaller, normal text (also View > Text size) |
 
 **Transmit**
 
