@@ -137,6 +137,8 @@ One screen holds the whole station: **Receive** on the left, the received pictur
 3. For a radio, set the frequency and the gain. For a file, open it or drop it on the window; a frequency in the file name (`..._433000000Hz.wav`) is read.
 4. Press Start receiving.
 
+**Through a converter.** For an LNB, a transverter or a down-converter, tick Through a converter under the frequency and give its LO (9750 MHz for a QO-100 LNB). Every frequency on screen stays the one on the air; the line under it shows what the radio itself tunes. Tick "LO above the signal" for a high-side LO, which mirrors the spectrum: KAVL turns it back. Transmit has the same for an up-converter or transverter in front of the HackRF.
+
 The frequency, the gains, the amplifier, the bias tee and the ppm correction change at once while receiving. When the transmission stops and comes back (even with another profile, on Auto), the receiver picks it up by itself, with no need to stop and start. Record IQ saves what the receiver gets as an IQ `.wav` in Documents/KAVL. The Receive column shows the lock, the link margin above the profile's threshold, the constellation, the signal-to-noise ratio, the frequency and clock offsets, the code words received, and the delay.
 
 **Low delay.** The picture starts 0.4 s after the first key frame and is then kept as close to the arrivals as they allow. Live from the camera's encoder to the screen measures about 0.75 s at 1440p60 (0.9 s at 720p, whose frames last longer). Protection adds one group of frames, because a group must arrive whole before it can be rebuilt: about 1.4 s for 1 in 16 at 1440p, 3.4 s at 720p. The transmitter sends its clock once a second, so a receiver on the same Mac (or on Macs with synced clocks) shows the delay.

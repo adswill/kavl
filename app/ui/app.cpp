@@ -69,6 +69,11 @@ void loadSettings(App& a) {
     a.rtl.gainTenthsDb = static_cast<int>(c.num("rtl.gain", -1));
     a.rtl.ppm = static_cast<int>(c.num("rtl.ppm", 0));
     a.rtl.biasTee = c.flag("rtl.biasTee", false);
+    for (auto [k, v] : {std::pair<const char*, Converter*>{"rx.conv", &a.rxConv}, {"tx.conv", &a.txConv}}) {
+        v->on = c.flag(std::string(k) + ".on", false);
+        v->loMHz = c.num(std::string(k) + ".loMHz", 0.0);
+        v->invert = c.flag(std::string(k) + ".invert", false);
+    }
     a.rtl.agc = c.flag("rtl.agc", false);
     a.hrf.lna = static_cast<int>(c.num("hackrf.lna", 24));
     a.hrf.vga = static_cast<int>(c.num("hackrf.vga", 20));
@@ -120,6 +125,11 @@ void saveSettings(App& a) {
     c.set("rtl.gain", a.rtl.gainTenthsDb);
     c.set("rtl.ppm", a.rtl.ppm);
     c.set("rtl.biasTee", a.rtl.biasTee);
+    for (auto [k, v] : {std::pair<const char*, Converter*>{"rx.conv", &a.rxConv}, {"tx.conv", &a.txConv}}) {
+        c.set(std::string(k) + ".on", v->on);
+        c.set(std::string(k) + ".loMHz", v->loMHz);
+        c.set(std::string(k) + ".invert", v->invert);
+    }
     c.set("rtl.agc", a.rtl.agc);
     c.set("hackrf.lna", a.hrf.lna);
     c.set("hackrf.vga", a.hrf.vga);
@@ -228,6 +238,19 @@ void updateSpectrum(App& a) {
 void rxRange(const App& a, double& lo, double& hi, const char*& name) {
     if (a.srcKind == 1) lo = 24, hi = 1766, name = "The RTL-SDR";
     else lo = 1, hi = 6000, name = a.srcKind == 2 ? "The HackRF" : "KAVL";
+    if ((a.srcKind == 1 || a.srcKind == 2) && a.rxConv.on) {   // on the air, through the converter
+        const double l = a.rxConv.airMHz(lo), h = a.rxConv.airMHz(hi);
+        lo = std::min(l, h), hi = std::max(l, h);
+        name = a.srcKind == 1 ? "The RTL-SDR through the converter" : "The HackRF through the converter";
+    }
+}
+
+double rxRadioHz(const App& a) {
+    return (a.srcKind == 1 || a.srcKind == 2 ? a.rxConv.radioMHz(a.freqMHz) : a.freqMHz) * 1e6;
+}
+
+double txRadioHz(const App& a) {
+    return (a.txDest == 0 ? a.txConv.radioMHz(a.txFreqMHz) : a.txFreqMHz) * 1e6;
 }
 
 // Keeps a.freqMHz inside the radio's range; says so when it had to move it.
@@ -270,7 +293,7 @@ void setRxFrequency(App& a, double hz, Tune how) {
     }
     if (a.rx.running()) rememberRecent(a, a.freqMHz);
     if (a.rx.running() && a.rx.source()) {
-        a.rx.source()->setFrequency(a.freqMHz * 1e6);
+        a.rx.source()->setFrequency(rxRadioHz(a));
         a.rx.retuned();
     }
 }
@@ -321,15 +344,16 @@ void startRx(App& a) {
             }
             s.index = a.rtlDevs[static_cast<size_t>(a.rtlDev)].index;
         }
-        src = makeRtlSource(s, a.freqMHz * 1e6, width);
+        src = makeRtlSource(s, rxRadioHz(a), width);
     } else if (a.srcKind == 3) {
         src = makeLoopbackSource(a.freqMHz * 1e6);
     } else {
         if (a.hrfDevs.empty()) refreshDevices(a);
         HackRfSettings s = a.hrf;
         if (!a.hrfDevs.empty()) s.serial = a.hrfDevs[static_cast<size_t>(a.hrfDev)].serial;
-        src = makeHackRfSource(s, a.freqMHz * 1e6, width);
+        src = makeHackRfSource(s, rxRadioHz(a), width);
     }
+    a.rx.setInvert((a.srcKind == 1 || a.srcKind == 2) && a.rxConv.on && a.rxConv.invert);
     if (!a.rx.start(std::move(src), a.profile)) a.rxError = a.rx.error();
     a.havePic = false;
     a.specView.clear();
@@ -348,7 +372,8 @@ void startTx(App& a) {
     d.toFile = a.txDest == 1;
     d.loopback = a.txDest == 2;
     d.path = a.txFilePath;
-    d.freqHz = a.txFreqMHz * 1e6;
+    d.freqHz = txRadioHz(a);
+    d.invert = a.txDest == 0 && a.txConv.on && a.txConv.invert;
     d.txGainDb = a.txGain;
     d.amp = a.txAmp;
     if (!a.hrfDevs.empty() && a.txHrfDev < static_cast<int>(a.hrfDevs.size())) d.serial = a.hrfDevs[static_cast<size_t>(a.txHrfDev)].serial;

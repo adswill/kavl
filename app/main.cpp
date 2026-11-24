@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
     int winW = 1600, winH = 950;   // --size WxH (checks at other window sizes)
     float textScaleArg = 0;        // --text-scale F (checks)
     std::string callsignArg;       // --callsign TEXT (checks)
+    std::vector<std::pair<bool, std::string>> convArgs;   // --rx-lo / --tx-lo MHz[:mirror]
     int gapProfile = -1;
     std::vector<std::pair<double, double>> retunes;   // --retune T:MHz: the receive frequency at T s   // --tx-gap A:B[:P]: the loopback transmitter stops at A s and starts again at B s (with profile P)
     for (int i = 1; i < argc; i++) {
@@ -80,6 +81,10 @@ int main(int argc, char** argv) {
         else if (k == "--size") std::sscanf(val().c_str(), "%dx%d", &winW, &winH);
         else if (k == "--text-scale") textScaleArg = static_cast<float>(std::atof(val().c_str()));
         else if (k == "--callsign") callsignArg = val();
+        else if (k == "--rx-lo" || k == "--tx-lo") {   // MHz[:mirror] a converter between the radio and the antenna
+            const std::string v = val();
+            convArgs.emplace_back(k == "--rx-lo", v);
+        }
         else if (k == "--run-for") runFor = std::atof(val().c_str());
         else if (k == "--tx-gap") std::sscanf(val().c_str(), "%lf:%lf:%d", &gapStop, &gapStart, &gapProfile);
         else if (k == "--retune") {   // T:MHz, may be given more than once
@@ -114,6 +119,12 @@ int main(int argc, char** argv) {
     app.hidden = hidden;
     if (textScaleArg > 0) app.textScale = std::clamp(textScaleArg, 0.9f, 1.3f);
     if (!callsignArg.empty()) app.cs.on = true, app.cs.text = callsignArg;
+    for (const auto& [rx, v] : convArgs) {
+        Converter& c = rx ? app.rxConv : app.txConv;
+        c.on = true;
+        c.loMHz = std::atof(v.c_str());
+        c.invert = v.find(":mirror") != std::string::npos;
+    }
     if (app.cs.font.empty()) app.cs.font = resourceDir() + "/Inter-SemiBold.ttf";
     app.wantPopout = popoutArg;
     app.player.setVolume(mute ? 0.f : app.volume);

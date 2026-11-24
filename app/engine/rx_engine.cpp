@@ -34,7 +34,7 @@ bool RxEngine::start(std::unique_ptr<IqSource> src, int profile) {
         specCount_ = 0;
     }
     fs_ = src_->sampleRate();
-    offset_ = src_->offsetHz();
+    offset_ = invert_ ? -src_->offsetHz() : src_->offsetHz();   // mirrored, the signal sits on the other side
     if (fs_ <= 0) {
         err_ = src_->error().empty() ? "the source has no sample rate" : src_->error();
         src_.reset();
@@ -42,7 +42,12 @@ bool RxEngine::start(std::unique_ptr<IqSource> src, int profile) {
     }
     player_.start();
     th_ = std::thread([this, profile] { worker(profile, fs_, offset_); });
-    if (!src_->start([this](const kavl::cf* x, size_t n) { onSamples(x, n); })) {
+    if (!src_->start([this](const kavl::cf* x, size_t n) {
+            if (!invert_) return onSamples(x, n);
+            conj_.resize(n);
+            for (size_t i = 0; i < n; i++) conj_[i] = std::conj(x[i]);
+            onSamples(conj_.data(), n);
+        })) {
         err_ = src_->error();
         {
             std::lock_guard<std::mutex> lk(qMtx_);

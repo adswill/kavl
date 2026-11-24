@@ -40,6 +40,7 @@ public:
         bool amp = false;          // HackRF RF amplifier (+14 dB)
         std::string serial;        // HackRF serial, empty = the first one
         bool loopback = false;     // to this Mac's receiver (loopback.h) instead of a HackRF
+        bool invert = false;       // mirror the spectrum (a converter with its LO above the signal turns it back)
     };
     bool start(const Dest& d);
     // Live: camera (or the test pattern, camera < 0) and microphone (-1 = none) encoded in real time for the profile while transmitting.

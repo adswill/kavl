@@ -453,9 +453,10 @@ void TxEngine::modulateLoop(Dest d) {
         } else {
             // the HackRF wants int8; peaks of the shaped signal stay inside with the data at a quarter of full scale (peaks about 3.5 x)
             std::vector<int8_t> b(out.size() * 2);
+            const float qs = d.invert ? -32.f : 32.f;   // mirrored (Q negated) for a converter that mirrors it back
             for (size_t i = 0; i < out.size(); i++) {
                 b[2 * i] = static_cast<int8_t>(std::lround(std::clamp(out[i].real() * 32.f, -127.f, 127.f)));
-                b[2 * i + 1] = static_cast<int8_t>(std::lround(std::clamp(out[i].imag() * 32.f, -127.f, 127.f)));
+                b[2 * i + 1] = static_cast<int8_t>(std::lround(std::clamp(out[i].imag() * qs, -127.f, 127.f)));
             }
             // keep about 0.3 s queued (a file programme): wait while the radio drains it; live waited before making the frame
             for (;;) {

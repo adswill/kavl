@@ -85,6 +85,7 @@ void radioSettings(App& a) {
         ImGui::SetItemTooltip("Look for radios again");
     }
     freqInput();
+    converterUi(a, a.rxConv, "rxconv", run, a.freqMHz);
     bool changed = false;
     if (a.srcKind == 1) {
         bool autoGain = a.rtl.gainTenthsDb < 0;

@@ -81,6 +81,15 @@ struct FileChooser {
     }
 };
 
+// A converter between a radio and the antenna (LNB, transverter, up-converter): the radio tunes the IF, the screen shows the air.
+struct Converter {
+    bool on = false;
+    double loMHz = 0;
+    bool invert = false;   // the LO above the signal: IF = LO - air, and the spectrum is mirrored (turned back in the engines)
+    double radioMHz(double airMHz) const { return !on ? airMHz : invert ? loMHz - airMHz : airMHz - loMHz; }
+    double airMHz(double radioMHz) const { return !on ? radioMHz : invert ? loMHz - radioMHz : radioMHz + loMHz; }
+};
+
 struct App {
     Player player;
     RxEngine rx{player};
@@ -117,6 +126,7 @@ struct App {
     std::vector<CaptureDevice> newCams, newMics;
     // receive
     int srcKind = 0;   // 0 IQ file, 1 RTL-SDR, 2 HackRF, 3 loopback (this Mac's transmitter)
+    Converter rxConv, txConv;   // an LNB or transverter between each radio and the antenna (on-air frequencies everywhere on screen)
     std::string iqPath;
     double freqMHz = 433.0;
     int profile = -1;   // -1 = Auto
@@ -173,6 +183,9 @@ void takeSnapshot(App& a);                   // the receiver, player and transmi
 void uploadPicture(App& a);
 void updateSpectrum(App& a);
 void rxRange(const App& a, double& lo, double& hi, const char*& name);
+double rxRadioHz(const App& a);   // what the receive radio tunes for a.freqMHz (through the converter when there is one)
+double txRadioHz(const App& a);   // what the HackRF tunes for a.txFreqMHz
+void converterUi(App& a, Converter& c, const char* id, bool locked, double onAirMHz);
 void clampRx(App& a);
 void rememberRecent(App& a, double mhz);
 void setRxFrequency(App& a, double hz, Tune how);

@@ -116,10 +116,11 @@ void transmitPanel(App& a, float w, float h) {
         // the frequency, the gain and the amplifier follow at once while transmitting
         if (a.txDest != 1) {
             ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz") && txRun) a.tx.setFrequency(a.txFreqMHz * 1e6);
-            ImGui::SetItemTooltip("Transmit frequency; changes at once while transmitting");
+            if (ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz") && txRun) a.tx.setFrequency(txRadioHz(a));
+            ImGui::SetItemTooltip("Transmit frequency (on the air); changes at once while transmitting");
         }
         if (a.txDest == 0) {
+            converterUi(a, a.txConv, "txconv", txRun, a.txFreqMHz);
             ImGui::SetNextItemWidth(-1);
             if (ImGui::SliderInt("##txg", &a.txGain, 0, 47, "TX gain %d dB") && txRun) a.tx.setGain(a.txGain);
             ImGui::SetItemTooltip("HackRF transmit gain (VGA); changes at once");
@@ -133,7 +134,8 @@ void transmitPanel(App& a, float w, float h) {
         }
         const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec && a.tx.overlaySignature() == callsignSig(a);
         const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
-        const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty()) && !a.txStopping;
+        const bool convOk = a.txDest != 0 || txRadioHz(a) >= 1e6;   // through a converter, the HackRF must have something to tune
+        const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty()) && convOk && !a.txStopping;
         if (!txRun) {
             if (actionButton(a, a.txDest != 1 ? "Start transmitting" : "Write the IQ file", Action::Primary, canStart)) startTx(a);
             if (!canStart) {   // say what is missing
@@ -143,6 +145,7 @@ void transmitPanel(App& a, float w, float h) {
                                   : a.txSource == 1 && a.listingCams                   ? "Looking for cameras..."
                                   : a.txSource == 1 && a.cameras.empty()               ? "No camera found."
                                   : a.txDest == 1 && a.txFilePath.empty()              ? "Choose where to save the IQ file (Save as...)."
+                                  : !convOk                                            ? "Check the converter's LO: the HackRF has no frequency to tune."
                                                                                        : "";
                 if (*why) ImGui::TextDisabled("%s", why);
             }

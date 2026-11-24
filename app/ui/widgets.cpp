@@ -109,3 +109,29 @@ void drawConstellation(const std::vector<kavl::cf>& pts, float size) {
     }
     ImGui::Dummy(ImVec2(size, size));
 }
+
+// The converter between a radio and the antenna (LNB, transverter): its LO and side; the frequencies on screen stay those on the air, and the
+// line under it says what the radio itself tunes. Locked while the radio runs (a mirrored spectrum needs a restart).
+void converterUi(App& a, Converter& c, const char* id, bool locked, double airMHz) {
+    (void)a;
+    ImGui::PushID(id);
+    if (locked) ImGui::BeginDisabled();
+    ImGui::Checkbox("Through a converter", &c.on);
+    ImGui::SetItemTooltip("An LNB, a transverter or an up/down converter between the radio and the antenna. Frequencies here stay on the air; the "
+                          "radio tunes the IF.");
+    if (c.on) {
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputDouble("##lo", &c.loMHz, 1.0, 10.0, "LO %.4f MHz");
+        ImGui::SetItemTooltip("The converter's local oscillator: 9750 for a QO-100 LNB (10489.5 comes in on 739.5), 10224 for a 10 GHz transverter "
+                              "with a 144 MHz IF, 1968 for a 2400 MHz up-converter from 432");
+        ImGui::Checkbox("LO above the signal (mirrors)", &c.invert);
+        ImGui::SetItemTooltip("High-side LO: the IF is the LO minus the signal and the spectrum comes mirrored; KAVL turns it back");
+    }
+    if (locked) ImGui::EndDisabled();
+    if (c.on) {
+        const double r = c.radioMHz(airMHz);
+        if (r <= 0) ImGui::TextColored(pal::warnAmber(), "The radio would tune %.4f MHz: check the LO", r);
+        else ImGui::TextDisabled("The radio tunes %.4f MHz", r);
+    }
+    ImGui::PopID();
+}
