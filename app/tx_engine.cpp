@@ -294,16 +294,25 @@ void TxEngine::modulateLoop(Dest d) {
     long loops = 0;
     int tailFrames = 0;
     std::deque<kavl::av::Packet> liveV, liveA;
+    std::deque<int64_t> liveWall;   // when each live video unit left the encoder
+    auto lastClock = std::chrono::steady_clock::now() - std::chrono::seconds(10);
     auto makeFrame = [&]() {
         if (live_) {   // everything that arrived goes out at once, in time order; padding when nothing is waiting
             std::vector<kavl::av::Packet> v, a;
-            feed_.take(v, a, opusHead_);
+            std::vector<int64_t> wall;
+            feed_.take(v, a, opusHead_, &wall);
             for (auto& p : v) liveV.push_back(std::move(p));
+            for (auto w : wall) liveWall.push_back(w);
             for (auto& p : a) liveA.push_back(std::move(p));
             while (!liveV.empty() || !liveA.empty()) {
                 const bool tv = liveA.empty() || (!liveV.empty() && liveV.front().ptsMs <= liveA.front().ptsMs);
                 kavl::av::Packet p = std::move(tv ? liveV.front() : liveA.front());
                 (tv ? liveV : liveA).pop_front();
+                int64_t wallMs = 0;
+                if (tv && !liveWall.empty()) {
+                    wallMs = liveWall.front();
+                    liveWall.pop_front();
+                }
                 if (!opusHead_.empty() && p.ptsMs >= nextCfg) {
                     kavl::av::Packet c;
                     c.type = kavl::av::kAudioConfig;
@@ -313,6 +322,10 @@ void TxEngine::modulateLoop(Dest d) {
                     nextCfg = p.ptsMs + 1000;
                 }
                 mux.push(p);
+                if (tv && wallMs && std::chrono::steady_clock::now() - lastClock > std::chrono::seconds(1)) {   // the clock, about once a second
+                    mux.push(kavl::av::clockPacket(p.ptsMs, wallMs));
+                    lastClock = std::chrono::steady_clock::now();
+                }
             }
             const auto pay = mux.takeFrame(!mux.frameReady());
             kavl::Header h;
@@ -353,18 +366,34 @@ void TxEngine::modulateLoop(Dest d) {
         n++;
         return kavl::frameSymbols(mc, h, pay.data());
     };
-    const auto& taps = kavl::rrc();
-    (void)taps;
-    cur = makeFrame();
+    // Live to a radio (or the loopback): low delay. Each frame is made only when the radio's queue runs low (0.1 s left), from what the encoder has
+    // given by then, and shaped without waiting for the next frame: every frame starts with the same preamble (longer than H), so the next one's
+    // first H symbols are known already.
+    const bool lowDelay = live_ && !wav;
+    const size_t ringTarget = static_cast<size_t>(rate * 2 * (lowDelay ? 0.1 : 0.3));
+    if (!lowDelay) cur = makeFrame();
     const auto t0 = std::chrono::steady_clock::now();
     while (!quit_) {
-        next = makeFrame();
+        if (lowDelay) {
+            for (;;) {
+                {
+                    std::lock_guard<std::mutex> lk(ringMtx_);
+                    if (ring_.size() < ringTarget || quit_) break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            if (quit_) break;
+            cur = makeFrame();
+        } else {
+            next = makeFrame();
+        }
+        const std::vector<kavl::cf>& after = lowDelay ? cur : next;   // its first H symbols: the preamble
         // pulse shaping of the current frame with H symbols of the previous and the next one around it
         std::vector<kavl::cf> win;
         win.reserve(cur.size() + 2 * static_cast<size_t>(H));
         win.insert(win.end(), prev.end() - H, prev.end());
         win.insert(win.end(), cur.begin(), cur.end());
-        win.insert(win.end(), next.begin(), next.begin() + H);
+        win.insert(win.end(), after.begin(), after.begin() + H);
         const auto shaped = kavl::Transmitter::shape(win);
         std::vector<kavl::cf> iq(shaped.begin() + static_cast<long>(H) * kavl::kSps, shaped.begin() + static_cast<long>(H + cur.size()) * kavl::kSps);
         std::vector<kavl::cf> out;
@@ -387,11 +416,11 @@ void TxEngine::modulateLoop(Dest d) {
                 b[2 * i] = static_cast<int8_t>(std::lround(std::clamp(out[i].real() * 32.f, -127.f, 127.f)));
                 b[2 * i + 1] = static_cast<int8_t>(std::lround(std::clamp(out[i].imag() * 32.f, -127.f, 127.f)));
             }
-            // keep about 0.3 s queued: wait while the radio drains it
+            // keep about 0.3 s queued (a file programme): wait while the radio drains it; live waited before making the frame
             for (;;) {
                 {
                     std::lock_guard<std::mutex> lk(ringMtx_);
-                    if (ring_.size() < static_cast<size_t>(rate * 2 * 0.3) || quit_) {
+                    if (lowDelay || ring_.size() < ringTarget || quit_) {
                         ring_.insert(ring_.end(), b.begin(), b.end());
                         break;
                     }
@@ -400,7 +429,7 @@ void TxEngine::modulateLoop(Dest d) {
             }
         }
         prev.swap(cur);
-        cur.swap(next);
+        if (!lowDelay) cur.swap(next);
         std::lock_guard<std::mutex> sl(stMtx_);
         st_.frames = n;
         st_.loops = loops;

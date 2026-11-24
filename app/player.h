@@ -32,6 +32,9 @@ public:
     void stop();
     void push(std::vector<kavl::av::Packet>&& packets);
     void setVolume(float v) { volume_ = v; }
+    // How long the first key frame waits before playing starts (default 0.4 s). With erasure protection the packets come a whole group at a
+    // time: 0.4 s plus one group. Afterwards the delay is trimmed to what the arrivals need (catch-up) and grows only when packets come late.
+    void setStartBufferMs(double ms) { startBufMs_ = ms; }
     Picture& picture() { return pic_; }
 
     struct Status {
@@ -39,6 +42,7 @@ public:
         long shown = 0, late = 0, audioPackets = 0;
         int srcW = 0, srcH = 0;
         double fps = 0, bufferSec = 0, videoKbps = 0;
+        double delaySec = -1;   // from the encoder of the transmitter to the screen (clock packets, kavl_av.h); -1 = not known
     };
     Status status();
 
@@ -62,6 +66,13 @@ private:
     std::atomic<bool> playing_{false};
     std::atomic<long long> t0ns_{0};
     std::atomic<double> basePts_{0};
+    std::atomic<bool> haveClock_{false};
+    std::atomic<double> startBufMs_{400.0};
+    // catch-up: the least time to spare (pts - now at arrival) over a window; the window covers one protection group's arrival at least
+    double minSlack_ = 1e9;
+    Clock::time_point slackT0_ = Clock::now(), lastBackoff_ = Clock::now();
+    void trackSlack(double slackMs);
+    std::atomic<long long> clockOffMs_{0};   // the transmitter's wall clock minus the pts
     std::mutex stMtx_;
     Status st_;
     Clock::time_point fpsT0_ = Clock::now();

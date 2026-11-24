@@ -153,6 +153,7 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
         std::lock_guard<std::mutex> lk(m_);
         err_.clear();
         v_.clear();
+        vWall_.clear();
         a_.clear();
         head_.clear();
         st_ = Status();
@@ -286,11 +287,13 @@ LiveFeed::Status LiveFeed::status() {
     return st_;
 }
 
-void LiveFeed::take(std::vector<kavl::av::Packet>& video, std::vector<kavl::av::Packet>& audio, std::vector<uint8_t>& head) {
+void LiveFeed::take(std::vector<kavl::av::Packet>& video, std::vector<kavl::av::Packet>& audio, std::vector<uint8_t>& head, std::vector<int64_t>* videoWallMs) {
     std::lock_guard<std::mutex> lk(m_);
     while (!v_.empty()) {
         video.push_back(std::move(v_.front()));
         v_.pop_front();
+        if (videoWallMs) videoWallMs->push_back(vWall_.front());
+        vWall_.pop_front();
     }
     while (!a_.empty()) {
         audio.push_back(std::move(a_.front()));
@@ -347,7 +350,11 @@ void LiveFeed::readVideo(int fd) {
                 fpsT = now;
             }
             v_.push_back(std::move(p));
-            if (v_.size() > 600) v_.pop_front();
+            vWall_.push_back(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+            if (v_.size() > 600) {
+                v_.pop_front();
+                vWall_.pop_front();
+            }
         }
         if (pos > (1u << 20)) {
             buf.erase(buf.begin(), buf.begin() + static_cast<long>(pos));

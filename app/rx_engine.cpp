@@ -3,6 +3,7 @@
 
 // KAVL app receive engine (rx_engine.h).
 #include "rx_engine.h"
+#include "kavl/kavl_fec.h"
 
 #include <chrono>
 #include <thread>
@@ -188,6 +189,7 @@ void RxEngine::worker(int profile, double fs, double offset) {
     kavl::cf ph(1, 0);
     long long n0 = 0;
     const auto wall0 = std::chrono::steady_clock::now();
+    int bufFec = -1;
     for (;;) {
         std::vector<kavl::cf> chunk;
         {
@@ -220,7 +222,14 @@ void RxEngine::worker(int profile, double fs, double offset) {
             }
         }
         const auto frames = rx.push(chunk.data(), chunk.size());
-        for (const auto& f : frames) demux.pushFrame(f);
+        for (const auto& f : frames) {
+            if (f.hdr.fec != bufFec && f.mc) {   // packets come a protection group at a time: the player waits one group more before it starts
+                bufFec = f.hdr.fec;
+                const auto fp = kavl::fec::profile(bufFec, f.mc->blocks);
+                player_.setStartBufferMs(400.0 + (bufFec > 0 ? fp.frames * kavl::frameSeconds(vp.symRate) * 1000.0 : 0.0));
+            }
+            demux.pushFrame(f);
+        }
         player_.push(demux.take());
         std::lock_guard<std::mutex> sl(sMtx_);
         st_.streamSec = t;

@@ -594,6 +594,8 @@ void receivePanel(App& a, float leftW, float contentH) {
     valueRow(a, "Video", ps.srcW ? "%dx%d %.0f fps" : "-", ps.srcW, ps.srcH, ps.fps);
     valueRow(a, "Video rate", "%.2f Mbit/s", ps.videoKbps / 1e3);
     valueRow(a, "Buffer", "%.1f s", ps.bufferSec);
+    if (ps.delaySec >= 0) valueRow(a, "Delay", "%.2f s", ps.delaySec);
+    if (ps.delaySec >= 0) ImGui::SetItemTooltip("From the transmitter's encoder to this screen (needs both clocks to agree: the same Mac, or synced Macs)");
     valueRow(a, "Sound", ps.soundDevice ? "%ld packets" : "no sound device", ps.audioPackets);
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderFloat("##vol", &a.volume, 0.f, 1.5f, "Volume %.2f")) a.player.setVolume(a.volume);
@@ -897,8 +899,8 @@ void printReport(App& a, double t) {
     const auto st = a.rx.stats();
     const auto ps = a.player.status();
     const auto ts = a.tx.status();
-    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f | tx frames=%ld underruns=%ld\n", t, st.frames, st.lost,
-                st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ts.frames, ts.underruns);
+    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f | tx frames=%ld underruns=%ld\n", t, st.frames,
+                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ts.frames, ts.underruns);
     std::fflush(stdout);
 }
 

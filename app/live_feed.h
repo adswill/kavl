@@ -32,8 +32,10 @@ public:
     void stop();
     bool running() const { return running_; }
     std::string error();
-    // the packets that arrived since the last call; head = the OpusHead once known
-    void take(std::vector<kavl::av::Packet>& video, std::vector<kavl::av::Packet>& audio, std::vector<uint8_t>& head);
+    // the packets that arrived since the last call; head = the OpusHead once known; videoWallMs (optional): when each video unit came out of the
+    // encoder (ms, Unix time)
+    void take(std::vector<kavl::av::Packet>& video, std::vector<kavl::av::Packet>& audio, std::vector<uint8_t>& head,
+              std::vector<int64_t>* videoWallMs = nullptr);
     struct Status {
         long videoUnits = 0, audioPackets = 0;
         double fps = 0, kbps = 0;
@@ -50,6 +52,7 @@ private:
     std::thread vth_, ath_, eth_;
     std::mutex m_;
     std::deque<kavl::av::Packet> v_, a_;
+    std::deque<int64_t> vWall_;
     std::vector<uint8_t> head_;
     std::string err_;
     Status st_;

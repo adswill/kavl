@@ -17,7 +17,8 @@
 #include <cstring>
 
 namespace {
-constexpr double kStartBufferMs = 2000.0;   // covers a protection group (the transmitter sends 3 s ahead)
+constexpr double kTargetSlackMs = 150.0;   // what catch-up leaves to spare for the earliest packet of a window
+constexpr double kTrimAboveMs = 250.0;     // trim only when that much more is spare all through the window
 constexpr size_t kMaxQueued = 6000;
 constexpr size_t kRingMax = 48000 * 2;   // 1 s of stereo
 }  // namespace
@@ -75,7 +76,12 @@ void Player::stop() {
         haveLast_ = false;
         rateWin_.clear();
         playing_ = false;
+        haveClock_ = false;
         epoch_++;
+    }
+    {
+        std::lock_guard<std::mutex> sl(stMtx_);
+        st_.delaySec = -1;
     }
     std::lock_guard<std::mutex> rl(ringMtx_);
     ring_.clear();
@@ -88,16 +94,24 @@ void Player::push(std::vector<kavl::av::Packet>&& packets) {
             opusHead_ = p.data;
             continue;
         }
+        int64_t wall = 0;
+        if (kavl::av::readClock(p, wall)) {
+            clockOffMs_ = wall - static_cast<int64_t>(p.ptsMs);
+            haveClock_ = true;
+            continue;
+        }
         if (p.type == kavl::av::kVideo) {
             if (haveLast_ && (p.ptsMs + 1000 < lastPts_ || p.ptsMs > lastPts_ + 10000)) {   // a jump: a new time line
                 vq_.clear();
                 aq_.clear();
                 rateWin_.clear();
                 playing_ = false;
+                haveClock_ = false;
                 epoch_++;
             }
             lastPts_ = p.ptsMs;
             haveLast_ = true;
+            if (playing_) trackSlack(p.ptsMs - nowPts());
             rateWin_.emplace_back(p.ptsMs, p.data.size());
             while (!rateWin_.empty() && rateWin_.front().first + 3000 < p.ptsMs) rateWin_.pop_front();
             vq_.push_back(std::move(p));
@@ -107,6 +121,23 @@ void Player::push(std::vector<kavl::av::Packet>&& packets) {
             if (aq_.size() > kMaxQueued) aq_.pop_front();
         }
     }
+}
+
+void Player::trackSlack(double slackMs) {
+    const auto now = Clock::now();
+    if (slackMs < -100.0 && now - lastBackoff_ > std::chrono::seconds(1)) {   // late: wait longer from now on (once a second at most)
+        basePts_ = basePts_.load() - (kTargetSlackMs - slackMs);
+        lastBackoff_ = now;
+        minSlack_ = 1e9;
+        slackT0_ = now;
+        return;
+    }
+    minSlack_ = std::min(minSlack_, slackMs);
+    const double windowMs = std::max(3000.0, 1.5 * (startBufMs_.load() - 400.0) + 500.0);   // one group arrival at least
+    if (std::chrono::duration<double, std::milli>(now - slackT0_).count() < windowMs) return;
+    if (minSlack_ > kTargetSlackMs + kTrimAboveMs) basePts_ = basePts_.load() + (minSlack_ - kTargetSlackMs);   // catch up: skip ahead
+    minSlack_ = 1e9;
+    slackT0_ = now;
 }
 
 double Player::nowPts() const {
@@ -149,7 +180,7 @@ void Player::videoLoop() {
         Dav1dSettings s;
         dav1d_default_settings(&s);
         s.n_threads = 6;
-        s.max_frame_delay = 2;
+        s.max_frame_delay = 1;   // no frame pipelining: lower delay (the threads still share each frame), and dav1d 1.5's drain could hang on it
         if (dav1d_open(&dec, &s) != 0) dec = nullptr;
     };
     // a decoded picture -> 8-bit packed planes
@@ -210,9 +241,14 @@ void Player::videoLoop() {
                 firstKeyAt = Clock::now();
             }
         }
-        if (keySeen && !playing_ && !local.empty() && Clock::now() - firstKeyAt > std::chrono::milliseconds(static_cast<int>(kStartBufferMs))) {
+        if (keySeen && !playing_ && !local.empty() && Clock::now() - firstKeyAt > std::chrono::milliseconds(static_cast<int>(startBufMs_.load()))) {
             basePts_ = static_cast<double>(local.front().ptsMs);
             t0ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
+            {
+                std::lock_guard<std::mutex> lk(mtx_);
+                minSlack_ = 1e9;
+                slackT0_ = lastBackoff_ = Clock::now();
+            }
             playing_ = true;
         }
         while (dec && keySeen && pics.size() < 3 && !local.empty()) {
@@ -259,8 +295,14 @@ void Player::videoLoop() {
                     pic_.h = pics.front().h;
                     pic_.fresh = true;
                 }
+                const double shownPts = pics.front().pts;
                 pics.pop_front();
                 std::lock_guard<std::mutex> sl(stMtx_);
+                if (haveClock_) {
+                    const long long wallNow = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                    const double d = (wallNow - (shownPts + static_cast<double>(clockOffMs_.load()))) / 1000.0;
+                    st_.delaySec = st_.delaySec < 0 ? d : st_.delaySec * 0.9 + d * 0.1;
+                }
                 st_.shown++;
                 fpsN_++;
                 const double dt = std::chrono::duration<double>(Clock::now() - fpsT0_).count();
