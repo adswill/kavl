@@ -6,7 +6,7 @@
 //   Transmit: a video file -> AV1 + Opus for a profile (ffmpeg) -> KAVL signal -> HackRF or IQ .wav.
 // Options: --file IQ.wav (start receiving it), --profile N, --tab rx|tx, --mute, --hidden, --shot OUT.png [--shot-after S] (a picture of the
 // window after S seconds, then quit). Checks without radios: --loopback (test pattern sent to this Mac's receiver), --fec N, --report (a status
-// line every second on stdout), --run-for S (quit after S seconds), --tx-gap A:B[:P] (the transmitter stops at A s and starts again at B s, with
+// line every second on stdout), --popout (the video window too; hidden with --hidden; --shot also saves it as OUT_popout.png), --run-for S (quit after S seconds), --tx-gap A:B[:P] (the transmitter stops at A s and starts again at B s, with
 // profile P), --retune T:MHz (the receive frequency changes at T s; more than one may be given).
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
@@ -25,6 +25,7 @@
 #include "loopback.h"
 #include "tx_engine.h"
 #include "video_gl.h"
+#include "video_popout.h"
 #include "kavl/kavl_fec.h"
 
 #include <algorithm>
@@ -121,7 +122,9 @@ struct App {
     Settings cfg;
     VideoGl video;
     ImFont *ui = nullptr, *bold = nullptr, *mono = nullptr, *big = nullptr;
-    int tab = 0;
+    bool showRx = true, showTx = true;   // the columns
+    VideoPopout popout;
+    bool wantPopout = false, hidden = false;
     // receive
     int srcKind = 0;   // 0 IQ file, 1 RTL-SDR, 2 HackRF, 3 loopback (this Mac's transmitter)
     std::string iqPath;
@@ -187,6 +190,8 @@ void loadSettings(App& a) {
     a.cameraName = c.str("tx.cameraName");
     a.microphoneName = c.str("tx.microphoneName");
     a.specView.load(c);
+    a.showRx = c.flag("view.showRx", true);
+    a.showTx = c.flag("view.showTx", true);
 }
 
 void saveSettings(App& a) {
@@ -222,6 +227,8 @@ void saveSettings(App& a) {
     c.set("tx.cameraName", a.cameraName);
     c.set("tx.microphoneName", a.microphoneName);
     a.specView.save(c);
+    c.set("view.showRx", a.showRx);
+    c.set("view.showTx", a.showTx);
     c.save();
 }
 
@@ -386,9 +393,19 @@ void drawVideo(App& a, ImVec2 size, bool hint) {
         dl->AddText(ImVec2(p0.x + (size.x - ts.x) * 0.5f, p0.y + (size.y - ts.y) * 0.5f), ImGui::GetColorU32(pal::grey()), t);
         ImGui::PopFont();
     }
+    ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##video", size);
+    const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.videoOnly = !a.videoOnly;
-    if (hint && ImGui::IsItemHovered() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) ImGui::SetItemTooltip("Double-click or F: video only. Esc: back. F11: full screen.");
+    if (hint && ImGui::IsItemHovered() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) ImGui::SetItemTooltip("Double-click or F: video only. Esc: back. F11: full screen. P: own window.");
+    if (hovered || a.popout.isOpen()) {   // the pop-out button, top right of the picture
+        const ImVec2 after = ImGui::GetCursorScreenPos();
+        const char* lbl = a.popout.isOpen() ? "Close own window" : "Own window";
+        ImGui::SetCursorScreenPos(ImVec2(p0.x + size.x - ImGui::CalcTextSize(lbl).x - 20, p0.y + 8));
+        if (ImGui::SmallButton(lbl)) a.wantPopout = !a.popout.isOpen();
+        ImGui::SetItemTooltip("The picture in a window of its own (P), e.g. for a second screen. There: F or double-click for full screen, Esc to close");
+        ImGui::SetCursorScreenPos(after);
+    }
 }
 
 void drawSpectrum(App& a, ImVec2 size) {
@@ -495,35 +512,40 @@ void radioSettings(App& a) {
     }
 }
 
-void receivePanel(App& a, float leftW, float contentH) {
+void receivePanel(App& a, float w, float h) {
     const auto st = a.rx.stats();
     const auto ps = a.player.status();
-    ImGui::BeginChild("##left", ImVec2(leftW, contentH), ImGuiChildFlags_Borders);
-    heading(a, "Radio");
+    ImGui::BeginChild("##left", ImVec2(w, h), ImGuiChildFlags_Borders);
     const bool run = a.rx.running();
-    if (run) ImGui::BeginDisabled();
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##src", &a.srcKind, "IQ file\0RTL-SDR (rtl_tcp)\0HackRF\0Loopback (this Mac's transmitter)\0") && a.srcKind > 0) refreshDevices(a);
-    ImGui::SetNextItemWidth(-1);
-    int sel = a.profile + 1;   // 0 = Auto
-    if (ImGui::Combo("##prof", &sel, [](void*, int i) { return i == 0 ? "Auto (find the profile)" : kavl::videoProfile(i - 1).name; }, nullptr,
-                     kavl::kNumVideoProfiles + 1))
-        a.profile = sel - 1;
-    if (run) ImGui::EndDisabled();
-    if (a.profile < 0 && run) {
-        const auto ds = a.rx.stats();
-        if (ds.profile >= 0) ImGui::TextColored(pal::okGreen(), "Auto: %s", kavl::videoProfile(ds.profile).name);
-        else ImGui::TextColored(pal::warnAmber(), "Auto: looking at every profile...");
-    }
-    radioSettings(a);
-    if (!run) {
-        if (ImGui::Button("Start", ImVec2(-1, 0))) startRx(a);
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.46f, 0.55f, 1));
-        if (ImGui::Button("Stop", ImVec2(-1, 0))) a.rx.stop();
-        ImGui::PopStyleColor();
-    }
-    if (run) {   // recording what the receiver gets, for a later look (the frequency goes into the file name)
+    ImGui::PushFont(a.bold);
+    const bool rxOpen = ImGui::CollapsingHeader("Receive", ImGuiTreeNodeFlags_DefaultOpen);
+    ImGui::PopFont();
+    if (rxOpen) {
+        if (run) ImGui::BeginDisabled();
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##src", &a.srcKind, "IQ file\0RTL-SDR (rtl_tcp)\0HackRF\0Loopback (this Mac's transmitter)\0") && a.srcKind > 0) refreshDevices(a);
+        ImGui::SetItemTooltip("Where the signal comes from. Loopback: this Mac's own transmitter, no radio needed");
+        ImGui::SetNextItemWidth(-1);
+        int sel = a.profile + 1;   // 0 = Auto
+        if (ImGui::Combo("##prof", &sel, [](void*, int i) { return i == 0 ? "Auto (find the profile)" : kavl::videoProfile(i - 1).name; }, nullptr,
+                         kavl::kNumVideoProfiles + 1))
+            a.profile = sel - 1;
+        ImGui::SetItemTooltip("The transmission's profile. Auto finds it from the signal's width and header");
+        if (run) ImGui::EndDisabled();
+        if (a.profile < 0 && run) {
+            if (st.profile >= 0) ImGui::TextColored(pal::okGreen(), "Auto: %s", kavl::videoProfile(st.profile).name);
+            else ImGui::TextColored(pal::warnAmber(), "Auto: looking for a signal...");
+        }
+        radioSettings(a);
+        if (!run) {
+            if (ImGui::Button("Start receiving", ImVec2(-1, 0))) startRx(a);
+            ImGui::SetItemTooltip("Opens the radio (or the file) and looks for a KAVL signal");
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.46f, 0.55f, 1));
+            if (ImGui::Button("Stop receiving", ImVec2(-1, 0))) a.rx.stop();
+            ImGui::PopStyleColor();
+        }
+        if (run) {   // recording what the receiver gets, for a later look (the frequency goes into the file name)
         if (!a.rx.recording()) {
             if (ImGui::Button("Record IQ", ImVec2(-1, 0))) {
                 const std::string dir = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/Documents/KAVL";
@@ -550,211 +572,251 @@ void receivePanel(App& a, float leftW, float contentH) {
             }
         }
     }
-    if (!a.rxError.empty()) ImGui::TextColored(pal::badRed(), "%s", a.rxError.c_str());
-    ImGui::Separator();
-    heading(a, "Signal");
-    const bool locked = run && st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < 0.5;
-    const bool clean = locked && st.lastOk == st.lastBlocks;
-    if (!run) {
-        lamp(pal::grey());
-        ImGui::TextDisabled("Stopped");
-    } else if (!locked) {
-        lamp(pal::warnAmber());
-        ImGui::TextColored(pal::warnAmber(), "Searching");
-    } else if (!clean) {
-        lamp(pal::warnAmber());
-        ImGui::TextColored(pal::warnAmber(), "Locked, errors (%d/%d)", st.lastOk, st.lastBlocks);
-    } else {
-        lamp(pal::okGreen());
-        ImGui::TextColored(pal::okGreen(), ps.playing ? "Locked, playing" : "Locked");
+        if (!a.rxError.empty()) ImGui::TextColored(pal::badRed(), "%s", a.rxError.c_str());
     }
-    const double margin = st.esn0 - thresholdDb(st.mc);
-    char lbl[64];
-    std::snprintf(lbl, sizeof(lbl), locked ? "%+.1f dB margin" : "margin -", margin);
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, margin < 1 ? pal::badRed() : margin < 3 ? pal::warnAmber() : pal::okGreen());
-    ImGui::ProgressBar(locked ? static_cast<float>(std::clamp(margin / 10.0, 0.0, 1.0)) : 0.f, ImVec2(-1, 0), lbl);
-    if (locked && margin < 0) {
-        ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
-        ImGui::TextWrapped("Signal too poor for this profile. A transmitter close by often overloads: lower the TX gain, turn its amplifier off and lower "
-                           "the gain here. Or use the profile's robust form (needs about 5 dB less).");
+    ImGui::PushFont(a.bold);
+    const bool sigOpen = ImGui::CollapsingHeader("Signal", ImGuiTreeNodeFlags_DefaultOpen);
+    ImGui::PopFont();
+    if (sigOpen) {
+        const bool locked = run && st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < 0.5;
+        const bool clean = locked && st.lastOk == st.lastBlocks;
+        if (!run) {
+            lamp(pal::grey());
+            ImGui::TextDisabled("Stopped");
+        } else if (!locked) {
+            lamp(pal::warnAmber());
+            ImGui::TextColored(pal::warnAmber(), "Searching");
+        } else if (!clean) {
+            lamp(pal::warnAmber());
+            ImGui::TextColored(pal::warnAmber(), "Locked, errors (%d/%d)", st.lastOk, st.lastBlocks);
+        } else {
+            lamp(pal::okGreen());
+            ImGui::TextColored(pal::okGreen(), ps.playing ? "Locked, playing" : "Locked");
+        }
+        const double margin = st.esn0 - thresholdDb(st.mc);
+        char lbl[64];
+        std::snprintf(lbl, sizeof(lbl), locked ? "%+.1f dB margin" : "margin -", margin);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, margin < 1 ? pal::badRed() : margin < 3 ? pal::warnAmber() : pal::okGreen());
+        ImGui::ProgressBar(locked ? static_cast<float>(std::clamp(margin / 10.0, 0.0, 1.0)) : 0.f, ImVec2(-1, 0), lbl);
+        ImGui::SetItemTooltip("Es/N0 above what this mode needs. Under 3 dB: close to dropping out");
+        if (locked && margin < 0) {
+            ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
+            ImGui::TextWrapped("Signal too poor for this profile. A transmitter close by often overloads: lower the TX gain, turn its amplifier off and lower "
+                               "the gain here. Or use the profile's robust form (needs about 5 dB less).");
+            ImGui::PopStyleColor();
+        }
         ImGui::PopStyleColor();
+        drawConstellation(a.rx.constellation(), std::min(w - 18, 200.f));
+        valueRow(a, "Mode", "%s", st.mc ? st.mc->name : "-");
+        valueRow(a, "Es/N0", "%.1f dB", st.esn0);
+        valueRow(a, "MER", "%.1f dB", st.mer);
+        valueRow(a, "Offset", "%.0f Hz", st.cfo);
+        valueRow(a, "Clock", "%.1f ppm", st.ppm);
+        valueRow(a, "Code words", "%ld/%ld", st.codeWordsOk, st.codeWords);
+        valueRow(a, "Lost", "%ld", st.lost);
+        if (st.fec > 0) valueRow(a, "Protection", "%s, %ld rebuilt", st.fec == 1 ? "1 in 16" : st.fec == 2 ? "2 in 32" : "1 in 8", st.rebuilt);
+        if (st.restarts > 0) valueRow(a, "Restarts", "%ld", st.restarts);
     }
-    ImGui::PopStyleColor();
-    drawConstellation(a.rx.constellation(), std::min(leftW - 18, 200.f));
-    valueRow(a, "Mode", "%s", st.mc ? st.mc->name : "-");
-    valueRow(a, "Es/N0", "%.1f dB", st.esn0);
-    valueRow(a, "MER", "%.1f dB", st.mer);
-    valueRow(a, "Offset", "%.0f Hz", st.cfo);
-    valueRow(a, "Clock", "%.1f ppm", st.ppm);
-    valueRow(a, "Code words", "%ld/%ld", st.codeWordsOk, st.codeWords);
-    valueRow(a, "Lost", "%ld", st.lost);
-    if (st.fec > 0) valueRow(a, "Protection", "%s, %ld rebuilt", st.fec == 1 ? "1 in 16" : st.fec == 2 ? "2 in 32" : "1 in 8", st.rebuilt);
-    ImGui::Separator();
-    heading(a, "Programme");
-    valueRow(a, "Video", ps.srcW ? "%dx%d %.0f fps" : "-", ps.srcW, ps.srcH, ps.fps);
-    valueRow(a, "Video rate", "%.2f Mbit/s", ps.videoKbps / 1e3);
-    valueRow(a, "Buffer", "%.1f s", ps.bufferSec);
-    if (ps.delaySec >= 0) valueRow(a, "Delay", "%.2f s", ps.delaySec);
-    if (ps.delaySec >= 0) ImGui::SetItemTooltip("From the transmitter's encoder to this screen (needs both clocks to agree: the same Mac, or synced Macs)");
-    valueRow(a, "Sound", ps.soundDevice ? "%ld packets" : "no sound device", ps.audioPackets);
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##vol", &a.volume, 0.f, 1.5f, "Volume %.2f")) a.player.setVolume(a.volume);
-    if (st.droppedSec > 0.01) ImGui::TextColored(pal::badRed(), "Decoder behind: %.1f s dropped", st.droppedSec);
-    if (run && st.speed > 0) ImGui::TextDisabled("Decoder %.2fx real time", st.speed);
+    ImGui::PushFont(a.bold);
+    const bool progOpen = ImGui::CollapsingHeader("Programme", ImGuiTreeNodeFlags_DefaultOpen);
+    ImGui::PopFont();
+    if (progOpen) {
+        valueRow(a, "Video", ps.srcW ? "%dx%d %.0f fps" : "-", ps.srcW, ps.srcH, ps.fps);
+        valueRow(a, "Video rate", "%.2f Mbit/s", ps.videoKbps / 1e3);
+        valueRow(a, "Buffer", "%.1f s", ps.bufferSec);
+        ImGui::SetItemTooltip("How far ahead of the picture on screen the received data is");
+        if (ps.delaySec >= 0) {
+            valueRow(a, "Delay", "%.2f s", ps.delaySec);
+            ImGui::SetItemTooltip("From the transmitter's encoder to this screen (needs both clocks to agree: the same Mac, or synced Macs)");
+        }
+        valueRow(a, "Sound", ps.soundDevice ? "%ld packets" : "no sound device", ps.audioPackets);
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::SliderFloat("##vol", &a.volume, 0.f, 1.5f, "Volume %.2f")) a.player.setVolume(a.volume);
+        ImGui::SetItemTooltip("Sound volume");
+        if (st.droppedSec > 0.01) ImGui::TextColored(pal::badRed(), "Decoder behind: %.1f s dropped", st.droppedSec);
+        if (run && st.speed > 0) ImGui::TextDisabled("Decoder %.2fx real time", st.speed);
+    }
     ImGui::EndChild();
 }
 
 // ---- transmit -------------------------------------------------------------------------------------------------------------------------------------------
-void transmitPage(App& a, float h) {
-    ImGui::BeginChild("##tx", ImVec2(0, h));
-    const float colW = std::min(820.f, ImGui::GetContentRegionAvail().x);
-    ImGui::BeginChild("##txcol", ImVec2(colW, 0));
-    heading(a, "1. Programme");
+void transmitPanel(App& a, float w, float h) {
+    ImGui::BeginChild("##right", ImVec2(w, h), ImGuiChildFlags_Borders);
     const bool txBusy = a.tx.preparing() || a.tx.running();
-    if (txBusy) ImGui::BeginDisabled();
-    ImGui::RadioButton("Video file", &a.txSource, 0);
-    ImGui::SameLine();
-    ImGui::RadioButton("Camera (live)", &a.txSource, 1);
-    ImGui::SameLine();
-    ImGui::RadioButton("Test pattern (live)", &a.txSource, 2);
-    if (txBusy) ImGui::EndDisabled();
-    if (a.txSource == 0) {
-        ImGui::TextDisabled("Drop a video file on the window, or");
-        ImGui::SameLine();
-        if (ImGui::Button("Choose a video...")) a.chooser.open(2, "Choose a video to transmit", false);
-        ImGui::TextUnformatted(a.videoPath.empty() ? "(no video chosen)" : a.videoPath.c_str());
-    } else {
-        if (a.txSource == 1 && !a.devicesListed) listDevices(a);
-        if (txBusy) ImGui::BeginDisabled();
-        if (a.txSource == 1) {
-            if (a.cameras.empty()) {
-                ImGui::TextColored(pal::warnAmber(), "No camera found. Check that a camera is connected and that KAVL may use it (System Settings, Privacy, Camera).");
-            } else {
-                ImGui::SetNextItemWidth(260);
-                ImGui::Combo("Camera", &a.camera, [](void* d, int i) { return (*static_cast<std::vector<CaptureDevice>*>(d))[static_cast<size_t>(i)].name.c_str(); },
-                             &a.cameras, static_cast<int>(a.cameras.size()));
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(220);
-                int mic = a.microphone + 1;   // 0 = no sound
-                std::vector<std::string> names = {"No sound"};
-                for (const auto& m : a.microphones) names.push_back(m.name);
-                if (ImGui::Combo("Microphone", &mic, [](void* d, int i) { return (*static_cast<std::vector<std::string>*>(d))[static_cast<size_t>(i)].c_str(); }, &names,
-                                 static_cast<int>(names.size())))
-                    a.microphone = mic - 1;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Look again")) {
-                if (a.camera >= 0 && a.camera < static_cast<int>(a.cameras.size())) a.cameraName = a.cameras[static_cast<size_t>(a.camera)].name;
-                a.microphoneName = a.microphone < 0 ? "none" : a.microphone < static_cast<int>(a.microphones.size()) ? a.microphones[static_cast<size_t>(a.microphone)].name : a.microphoneName;
-                listDevices(a);
-            }
-        }
-        ImGui::SetNextItemWidth(120);
-        ImGui::Combo("Frame rate", &a.liveFps, "30 fps\0" "60 fps\0");
-        if (txBusy) ImGui::EndDisabled();
-        ImGui::TextDisabled("Encoded in real time while transmitting (SVT-AV1 low delay). macOS asks once for camera and microphone access.");
-    }
-    ImGui::Spacing();
-    heading(a, "2. Profile");
-    const bool busy = txBusy;
-    if (busy) ImGui::BeginDisabled();
-    ImGui::SetNextItemWidth(260);
-    ImGui::Combo("##txprof", &a.txProfile, [](void*, int i) { return kavl::videoProfile(i).name; }, nullptr, kavl::kNumVideoProfiles);
-    const auto& vp = kavl::videoProfile(a.txProfile);
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(230);
-    ImGui::Combo("Protection##txfec", &a.txFec, [](void*, int i) { return i == 0 ? "No extra protection" : kavl::fec::profileName(i); }, nullptr,
-                 kavl::fec::kNumProfiles);
-    ImGui::SetItemTooltip("Parity frames: any lost frame of a group is rebuilt (a burst of interference, a fade). Costs video bits.");
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("%dx%d at %d fps: AV1 %d kbit/s + Opus 112 kbit/s, %s, %.0f kHz wide, needs about %.1f dB", vp.width, vp.height,
-                       a.txSource == 0 ? vp.fps : std::min(vp.fps, a.liveFps ? 60 : 30), kavl::videoKbps(vp, a.txFec), kavl::modcod(vp.modcod)->name,
-                       kavl::occupiedHz(vp.symRate) / 1e3, thresholdDb(kavl::modcod(vp.modcod)));
-    ImGui::PopStyleColor();
-    if (a.txSource != 0 && vp.width > 2560) ImGui::TextColored(pal::warnAmber(), "Live 4K: the real-time encoder gives a softer picture than an encoded file at the same bit rate.");
-    if (a.txSource == 0 && ImGui::Button("Encode for this profile") && !a.videoPath.empty()) a.tx.prepare(a.videoPath, a.txProfile, a.txFec);
-    if (busy) ImGui::EndDisabled();
-    if (a.txSource == 0 && (a.tx.preparing() || a.tx.ready() || !a.tx.prepareMessage().empty())) {
-        ImGui::ProgressBar(a.tx.progress(), ImVec2(-1, 0));
-        ImGui::TextWrapped("%s", a.tx.prepareMessage().c_str());
-    }
-    ImGui::Spacing();
-    heading(a, "3. Send");
     const bool txRun = a.tx.running();
-    if (txRun) ImGui::BeginDisabled();
-    ImGui::RadioButton("HackRF", &a.txDest, 0);
-    ImGui::SameLine();
-    ImGui::RadioButton("IQ file (.wav)", &a.txDest, 1);
-    ImGui::SameLine();
-    ImGui::RadioButton("Loopback", &a.txDest, 2);
-    ImGui::SetItemTooltip("To this Mac's receiver, no radio (Receive source: Loopback). For trying things out.");
-    // the frequency, the gain and the amplifier follow at once while transmitting
-    auto txFreq = [&]() {
-        ImGui::SetNextItemWidth(170);
-        if (txRun) ImGui::EndDisabled();
-        if (ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz") && txRun) a.tx.setFrequency(a.txFreqMHz * 1e6);
-        ImGui::SetItemTooltip("Transmit frequency; changes at once while transmitting");
+    ImGui::PushFont(a.bold);
+    const bool open = ImGui::CollapsingHeader("Transmit", ImGuiTreeNodeFlags_DefaultOpen);
+    ImGui::PopFont();
+    if (open) {
+        heading(a, "Programme");
+        if (txBusy) ImGui::BeginDisabled();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##txsrc", &a.txSource, "Video file\0Camera (live)\0Test pattern (live)\0");
+        ImGui::SetItemTooltip("What to send: a video file (encoded first), the camera and microphone, or a test pattern with a tone");
+        if (txBusy) ImGui::EndDisabled();
+        if (a.txSource == 0) {
+            if (txBusy) ImGui::BeginDisabled();
+            if (ImGui::Button("Choose a video...", ImVec2(-1, 0))) a.chooser.open(2, "Choose a video to transmit", false);
+            ImGui::SetItemTooltip("Or drop a video file on the window");
+            if (txBusy) ImGui::EndDisabled();
+            ImGui::TextWrapped("%s", a.videoPath.empty() ? "(no video chosen)" : std::filesystem::path(a.videoPath).filename().string().c_str());
+        } else {
+            if (a.txSource == 1 && !a.devicesListed) listDevices(a);
+            if (txBusy) ImGui::BeginDisabled();
+            if (a.txSource == 1) {
+                if (a.cameras.empty()) {
+                    ImGui::TextColored(pal::warnAmber(), "No camera found. Check that a camera is connected and that KAVL may use it (System Settings, Privacy, Camera).");
+                } else {
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::Combo("##cam", &a.camera, [](void* d, int i) { return (*static_cast<std::vector<CaptureDevice>*>(d))[static_cast<size_t>(i)].name.c_str(); },
+                                 &a.cameras, static_cast<int>(a.cameras.size()));
+                    ImGui::SetItemTooltip("Camera (kept by name)");
+                    int mic = a.microphone + 1;   // 0 = no sound
+                    std::vector<std::string> names = {"No sound"};
+                    for (const auto& m : a.microphones) names.push_back(m.name);
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::Combo("##mic", &mic, [](void* d, int i) { return (*static_cast<std::vector<std::string>*>(d))[static_cast<size_t>(i)].c_str(); }, &names,
+                                     static_cast<int>(names.size())))
+                        a.microphone = mic - 1;
+                    ImGui::SetItemTooltip("Microphone (kept by name; the Mac's own one unless you pick another)");
+                }
+                if (ImGui::Button("Look for cameras again", ImVec2(-1, 0))) {
+                    if (a.camera >= 0 && a.camera < static_cast<int>(a.cameras.size())) a.cameraName = a.cameras[static_cast<size_t>(a.camera)].name;
+                    a.microphoneName = a.microphone < 0 ? "none" : a.microphone < static_cast<int>(a.microphones.size()) ? a.microphones[static_cast<size_t>(a.microphone)].name : a.microphoneName;
+                    listDevices(a);
+                }
+            }
+            ImGui::SetNextItemWidth(-1);
+            ImGui::Combo("##fps", &a.liveFps, "30 fps\0" "60 fps\0");
+            ImGui::SetItemTooltip("Frame rate of the live picture (a camera that has only 30 fps sends 30)");
+            if (txBusy) ImGui::EndDisabled();
+        }
+        ImGui::Spacing();
+        heading(a, "Profile");
+        if (txBusy) ImGui::BeginDisabled();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##txprof", &a.txProfile, [](void*, int i) { return kavl::videoProfile(i).name; }, nullptr, kavl::kNumVideoProfiles);
+        ImGui::SetItemTooltip("Picture size, frame rate and signal width. Robust: needs about 5 dB less signal, is wider");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##txfec", &a.txFec, [](void*, int i) { return i == 0 ? "No extra protection" : kavl::fec::profileName(i); }, nullptr, kavl::fec::kNumProfiles);
+        ImGui::SetItemTooltip("Parity frames: any lost frame of a group is rebuilt (a burst of interference, a fade). Costs video bits, and adds one group of delay");
+        const auto& vp = kavl::videoProfile(a.txProfile);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%dx%d at %d fps: AV1 %d kbit/s + Opus 112 kbit/s, %s, %.0f kHz wide, needs about %.1f dB", vp.width, vp.height,
+                           a.txSource == 0 ? vp.fps : std::min(vp.fps, a.liveFps ? 60 : 30), kavl::videoKbps(vp, a.txFec), kavl::modcod(vp.modcod)->name,
+                           kavl::occupiedHz(vp.symRate) / 1e3, thresholdDb(kavl::modcod(vp.modcod)));
+        ImGui::PopStyleColor();
+        if (a.txSource != 0 && vp.width > 2560) ImGui::TextColored(pal::warnAmber(), "Live 4K: the real-time encoder gives a softer picture than an encoded file.");
+        if (a.txSource == 0) {
+            if (ImGui::Button("Encode for this profile", ImVec2(-1, 0)) && !a.videoPath.empty()) a.tx.prepare(a.videoPath, a.txProfile, a.txFec);
+            ImGui::SetItemTooltip("AV1 + Opus for this profile with ffmpeg (slow, best quality); once per video and profile");
+        }
+        if (txBusy) ImGui::EndDisabled();
+        if (a.txSource == 0 && (a.tx.preparing() || a.tx.ready() || !a.tx.prepareMessage().empty())) {
+            ImGui::ProgressBar(a.tx.progress(), ImVec2(-1, 0));
+            ImGui::TextWrapped("%s", a.tx.prepareMessage().c_str());
+        }
+        ImGui::Spacing();
+        heading(a, "Send to");
         if (txRun) ImGui::BeginDisabled();
-    };
-    if (a.txDest == 2) {
-        txFreq();
-    } else if (a.txDest == 0) {
-        if (a.hrfDevs.size() > 1) {
-            ImGui::SetNextItemWidth(260);
+        ImGui::SetNextItemWidth(-1);
+        ImGui::Combo("##txdest", &a.txDest, "HackRF\0IQ file (.wav)\0Loopback (this Mac's receiver)\0");
+        ImGui::SetItemTooltip("HackRF: on the air. IQ file: for later. Loopback: straight into this Mac's receiver (Receive source: Loopback)");
+        if (a.txDest == 0 && a.hrfDevs.size() > 1) {
+            ImGui::SetNextItemWidth(-1);
             ImGui::Combo("##txdev", &a.txHrfDev, [](void* d, int i) { return (*static_cast<std::vector<RadioDevice>*>(d))[static_cast<size_t>(i)].label.c_str(); },
                          &a.hrfDevs, static_cast<int>(a.hrfDevs.size()));
+            ImGui::SetItemTooltip("Which HackRF sends");
         }
-        txFreq();
+        if (a.txDest == 1) {
+            if (ImGui::Button("Save as...", ImVec2(-1, 0))) a.chooser.open(3, "Save the KAVL IQ file", true, "kavl_programme.wav");
+            ImGui::TextWrapped("%s", a.txFilePath.empty() ? "(no file chosen)" : a.txFilePath.c_str());
+        }
         if (txRun) ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(160);
-        if (ImGui::SliderInt("##txg", &a.txGain, 0, 47, "TX gain %d dB") && txRun) a.tx.setGain(a.txGain);
-        ImGui::SetItemTooltip("HackRF transmit gain (VGA); changes at once");
-        ImGui::SameLine();
-        if (ImGui::Checkbox("RF amplifier (+14 dB)", &a.txAmp) && txRun) a.tx.setAmp(a.txAmp);
-        ImGui::SetItemTooltip("The HackRF's RF amplifier; switch it off when the receiver is close by");
-        if (txRun) ImGui::BeginDisabled();
-        ImGui::TextColored(pal::warnAmber(), "Transmit only where your licence and the band plan allow it (%.0f kHz wide signal).", kavl::occupiedHz(vp.symRate) / 1e3);
-    } else {
-        if (ImGui::Button("Save as...")) a.chooser.open(3, "Save the KAVL IQ file", true, "kavl_programme.wav");
-        ImGui::SameLine();
-        ImGui::TextUnformatted(a.txFilePath.empty() ? "(no file chosen)" : a.txFilePath.c_str());
-    }
-    if (txRun) ImGui::EndDisabled();
-    const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec;
-    const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
-    const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty());
-    if (!a.tx.running()) {
-        if (!canStart) ImGui::BeginDisabled();
-        if (ImGui::Button(a.txDest != 1 ? "  Start transmitting  " : "  Write the IQ file  ")) startTx(a);
-        if (!canStart) ImGui::EndDisabled();
-        if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec))
-            ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Button, pal::badRed());
-        if (ImGui::Button("  Stop  ")) a.tx.stop();
-        ImGui::PopStyleColor();
+        // the frequency, the gain and the amplifier follow at once while transmitting
+        if (a.txDest != 1) {
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz") && txRun) a.tx.setFrequency(a.txFreqMHz * 1e6);
+            ImGui::SetItemTooltip("Transmit frequency; changes at once while transmitting");
+        }
+        if (a.txDest == 0) {
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::SliderInt("##txg", &a.txGain, 0, 47, "TX gain %d dB") && txRun) a.tx.setGain(a.txGain);
+            ImGui::SetItemTooltip("HackRF transmit gain (VGA); changes at once");
+            if (ImGui::Checkbox("RF amplifier (+14 dB)", &a.txAmp) && txRun) a.tx.setAmp(a.txAmp);
+            ImGui::SetItemTooltip("The HackRF's RF amplifier; switch it off when the receiver is close by");
+            ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
+            ImGui::TextWrapped("Transmit only where your licence and the band plan allow it (%.0f kHz wide).", kavl::occupiedHz(vp.symRate) / 1e3);
+            ImGui::PopStyleColor();
+        }
+        const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec;
+        const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
+        const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty());
+        if (!txRun) {
+            if (!canStart) ImGui::BeginDisabled();
+            if (ImGui::Button(a.txDest != 1 ? "Start transmitting" : "Write the IQ file", ImVec2(-1, 0))) startTx(a);
+            if (!canStart) ImGui::EndDisabled();
+            if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec))
+                ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, pal::badRed());
+            if (ImGui::Button("Stop transmitting", ImVec2(-1, 0))) a.tx.stop();
+            ImGui::PopStyleColor();
+        }
     }
     const auto ts = a.tx.status();
-    if (!ts.message.empty()) ImGui::TextWrapped("%s", ts.message.c_str());
-    if (a.tx.running() || ts.frames > 0) {
-        valueRow(a, "On air", "%.1f s (programme %.1f s, loops %ld)", ts.seconds, ts.programmeSec, ts.loops);
-        valueRow(a, "Frames", "%ld", ts.frames);
-        valueRow(a, "Sample rate", "%.3f Msps", ts.sampleRate / 1e6);
-        valueRow(a, "Payload", "%.3f Mbit/s", ts.payloadMbps);
-        if (ts.underruns) ImGui::TextColored(pal::warnAmber(), "Radio waited for data %ld times", ts.underruns);
-        if (a.tx.live()) {
-            const auto ls = a.tx.liveStatus();
-            valueRow(a, "Live encoder", "%.1f fps, %.2f Mbit/s, %ld sound packets", ls.fps, ls.kbps / 1e3, ls.audioPackets);
-            if (ls.captureW) valueRow(a, "Camera", "%dx%d at %.0f fps", ls.captureW, ls.captureH, ls.captureFps);
-            const std::string le = a.tx.liveError();
-            if (!le.empty() && ls.videoUnits == 0) ImGui::TextColored(pal::warnAmber(), "ffmpeg: %s", le.c_str());   // notices are harmless once video flows
+    if (a.tx.running() || ts.frames > 0 || !ts.message.empty()) {
+        ImGui::PushFont(a.bold);
+        const bool airOpen = ImGui::CollapsingHeader("On air", ImGuiTreeNodeFlags_DefaultOpen);
+        ImGui::PopFont();
+        if (airOpen) {
+            if (!ts.message.empty()) ImGui::TextWrapped("%s", ts.message.c_str());
+            valueRow(a, "On air", "%.1f s", ts.seconds);
+            if (ts.programmeSec > 0) valueRow(a, "Programme", "%.1f s, loops %ld", ts.programmeSec, ts.loops);
+            valueRow(a, "Frames", "%ld", ts.frames);
+            valueRow(a, "Sample rate", "%.3f Msps", ts.sampleRate / 1e6);
+            valueRow(a, "Payload", "%.3f Mbit/s", ts.payloadMbps);
+            if (ts.underruns) ImGui::TextColored(pal::warnAmber(), "Radio waited for data %ld times", ts.underruns);
+            if (a.tx.live()) {
+                const auto ls = a.tx.liveStatus();
+                valueRow(a, "Encoder", "%.1f fps, %.2f Mbit/s", ls.fps, ls.kbps / 1e3);
+                valueRow(a, "Sound", "%ld packets", ls.audioPackets);
+                if (ls.captureW) valueRow(a, "Camera", "%dx%d at %.0f fps", ls.captureW, ls.captureH, ls.captureFps);
+                const std::string le = a.tx.liveError();
+                if (!le.empty() && ls.videoUnits == 0) ImGui::TextColored(pal::warnAmber(), "ffmpeg: %s", le.c_str());   // notices are harmless once video flows
+            }
         }
     }
-    ImGui::Spacing();
-    ImGui::TextDisabled("Tip: receive at the same time with an RTL-SDR on the Receive tab.");
     ImGui::EndChild();
-    ImGui::EndChild();
+}
+
+// the line at the bottom: receiver, transmitter, delay, decoder speed
+void statusBar(App& a) {
+    const auto st = a.rx.stats();
+    const auto ps = a.player.status();
+    ImGui::Separator();
+    auto part = [&](ImVec4 col, const char* fmt, ...) {
+        char buf[160];
+        va_list ap;
+        va_start(ap, fmt);
+        std::vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+        lamp(col);
+        ImGui::TextUnformatted(buf);
+        ImGui::SameLine(0, 24);
+    };
+    if (!a.rx.running()) part(pal::grey(), "RX stopped");
+    else {
+        const bool locked = st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < 0.5;
+        const int prof = a.profile >= 0 ? a.profile : st.profile;
+        part(locked ? pal::okGreen() : pal::warnAmber(), "RX %.4f MHz  %s%s", a.freqMHz, locked ? (ps.playing ? "playing" : "locked") : "searching",
+             prof >= 0 ? (std::string("  ") + kavl::videoProfile(prof).name).c_str() : "");
+    }
+    if (!a.tx.running()) part(pal::grey(), "TX off");
+    else part(pal::badRed(), "TX %s %.4f MHz%s", a.txDest == 1 ? "file" : a.txDest == 2 ? "loopback" : "on air", a.txFreqMHz, a.tx.live() ? "  live" : "");
+    if (ps.delaySec >= 0) part(pal::accent(), "Delay %.2f s", ps.delaySec);
+    if (a.rx.running() && st.speed > 0) part(st.speed < 1.0 ? pal::badRed() : pal::grey(), "Decoder %.2fx", st.speed);
+    ImGui::NewLine();
 }
 
 // ---- windows ------------------------------------------------------------------------------------------------------------------------------------------
@@ -802,7 +864,7 @@ void frame(App& a) {
         a.srcKind = 0;
         if (const double f = frequencyFromName(picked)) a.freqMHz = f / 1e6;
     }
-    if (a.chooser.poll(2, picked)) a.videoPath = picked;
+    if (a.chooser.poll(2, picked)) a.videoPath = picked, a.txSource = 0;
     if (a.chooser.poll(3, picked)) a.txFilePath = picked;
     uploadPicture(a);
     updateSpectrum(a);
@@ -812,7 +874,7 @@ void frame(App& a) {
     ImGui::SetNextWindowSize(vp->Size);
     ImGui::Begin("KAVL", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoSavedSettings |
-                     (a.videoOnly ? 0 : ImGuiWindowFlags_MenuBar));
+                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | (a.videoOnly ? 0 : ImGuiWindowFlags_MenuBar));
     const bool f11 = ImGui::IsKeyPressed(ImGuiKey_F11);
     if (!a.videoOnly && ImGui::BeginMenuBar()) {
         ImGui::PushStyleColor(ImGuiCol_Text, pal::accent());
@@ -830,14 +892,19 @@ void frame(App& a) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open IQ file...", "Cmd+O")) a.chooser.open(1, "Choose a KAVL IQ .wav", false);
             if (ImGui::MenuItem("Choose a video to transmit...")) {
-                a.tab = 1;
+                a.showTx = true;
                 a.chooser.open(2, "Choose a video to transmit", false);
             }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("View")) {
+            ImGui::MenuItem("Receive column", "Cmd+1", &a.showRx);
+            ImGui::MenuItem("Transmit column", "Cmd+2", &a.showTx);
+            ImGui::Separator();
             if (ImGui::MenuItem("Video only", "F", a.videoOnly)) a.videoOnly = !a.videoOnly;
             if (ImGui::MenuItem("Full screen", "F11", a.fullscreen)) a.fullscreen = !a.fullscreen, glfwPostEmptyEvent();
+            if (ImGui::MenuItem("Video in its own window", "P", a.popout.isOpen())) a.wantPopout = !a.popout.isOpen();
+            ImGui::Separator();
             ImGui::MenuItem("Waterfall", nullptr, &a.specView.waterfall);
             ImGui::EndMenu();
         }
@@ -865,46 +932,42 @@ void frame(App& a) {
     }
     const ImGuiIO& io = ImGui::GetIO();
     if (!io.WantTextInput) {
-        if (ImGui::IsKeyPressed(ImGuiKey_F) && a.tab == 0) a.videoOnly = !a.videoOnly;
+        if (ImGui::IsKeyPressed(ImGuiKey_F) && !io.KeySuper) a.videoOnly = !a.videoOnly;
+        if (ImGui::IsKeyPressed(ImGuiKey_P) && !io.KeySuper) a.wantPopout = !a.popout.isOpen();
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) a.videoOnly = false;
         if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_O)) a.chooser.open(1, "Choose a KAVL IQ .wav", false);
+        if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_1)) a.showRx = !a.showRx;
+        if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_2)) a.showTx = !a.showTx;
     }
-    if (a.videoOnly && a.tab == 0) {
+    if (a.videoOnly) {   // the picture alone: no columns, no spectrum
         drawVideo(a, ImGui::GetContentRegionAvail(), false);
         ImGui::End();
         aboutWindows(a);
         return;
     }
-    if (ImGui::BeginTabBar("##tabs")) {
-        static bool first = true;
-        const int want = a.tab;
-        if (ImGui::BeginTabItem("Receive", nullptr, first && want == 0 ? ImGuiTabItemFlags_SetSelected : 0)) {
-            a.tab = 0;
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("Transmit", nullptr, first && want == 1 ? ImGuiTabItemFlags_SetSelected : 0)) {
-            a.tab = 1;
-            ImGui::EndTabItem();
-        }
-        first = false;
-        ImGui::EndTabBar();
-    }
-    const float h = ImGui::GetContentRegionAvail().y;
-    if (a.tab == 0) {
-        receivePanel(a, 290, h);
+    // the station: Receive on the left, the picture and the spectrum in the middle, Transmit on the right, the status line at the bottom
+    const float statusH = ImGui::GetFrameHeightWithSpacing() + 4;
+    const float h = ImGui::GetContentRegionAvail().y - statusH;
+    const float leftW = 300, rightW = 330, gap = ImGui::GetStyle().ItemSpacing.x;
+    if (a.showRx) {
+        receivePanel(a, leftW, h);
         ImGui::SameLine();
-        ImGui::BeginChild("##main", ImVec2(0, h));
-        const ImVec2 av = ImGui::GetContentRegionAvail();
-        const float specH = std::clamp(av.y * (a.specView.waterfall ? 0.34f : 0.18f), 120.f, 420.f);
-        const float rowH = ImGui::GetFrameHeightWithSpacing();
-        drawVideo(a, ImVec2(av.x, av.y - specH - rowH - 6), true);
-        ImGui::Dummy(ImVec2(0, 2));
-        a.specView.options();
-        drawSpectrum(a, ImVec2(av.x, ImGui::GetContentRegionAvail().y));
-        ImGui::EndChild();
-    } else {
-        transmitPage(a, h);
     }
+    const float midW = ImGui::GetContentRegionAvail().x - (a.showTx ? rightW + gap : 0.f);
+    ImGui::BeginChild("##main", ImVec2(midW, h), 0, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    const ImVec2 av = ImGui::GetContentRegionAvail();
+    const float specH = std::clamp(av.y * (a.specView.waterfall ? 0.36f : 0.2f), 140.f, 460.f);
+    const float rowH = ImGui::GetFrameHeightWithSpacing();
+    drawVideo(a, ImVec2(av.x, av.y - specH - rowH - 6), true);
+    ImGui::Dummy(ImVec2(0, 2));
+    a.specView.options();
+    drawSpectrum(a, ImVec2(av.x, ImGui::GetContentRegionAvail().y));
+    ImGui::EndChild();
+    if (a.showTx) {
+        ImGui::SameLine();
+        transmitPanel(a, rightW, h);
+    }
+    statusBar(a);
     ImGui::End();
     aboutWindows(a);
 }
@@ -939,7 +1002,7 @@ void writeShot(GLFWwindow* w, const std::string& path) {
 int main(int argc, char** argv) {
     std::string file, shot;
     double shotAfter = 8.0;
-    bool hidden = false, mute = false, loopback = false, report = false;
+    bool hidden = false, mute = false, loopback = false, report = false, popoutArg = false;
     int profile = -1, tab = -1, fecArg = -1;
     double runFor = 0, gapStop = 0, gapStart = 0;
     int gapProfile = -1;
@@ -957,6 +1020,7 @@ int main(int argc, char** argv) {
         else if (k == "--loopback") loopback = true;
         else if (k == "--fec") fecArg = std::clamp(std::atoi(val().c_str()), 0, kavl::fec::kNumProfiles - 1);
         else if (k == "--report") report = true;
+        else if (k == "--popout") popoutArg = true;
         else if (k == "--run-for") runFor = std::atof(val().c_str());
         else if (k == "--tx-gap") std::sscanf(val().c_str(), "%lf:%lf:%d", &gapStop, &gapStart, &gapProfile);
         else if (k == "--retune") {   // T:MHz, may be given more than once
@@ -985,7 +1049,9 @@ int main(int argc, char** argv) {
     if (!shot.empty() || hidden) app.cfg = Settings();   // checks start from the defaults
     else loadSettings(app);
     if (profile >= 0) app.profile = app.txProfile = profile;
-    if (tab >= 0) app.tab = tab;
+    if (tab == 1) app.showTx = true;   // --tab tx: the transmit column on show (both are, on the combined screen)
+    app.hidden = hidden;
+    app.wantPopout = popoutArg;
     app.player.setVolume(mute ? 0.f : app.volume);
     if (mute) app.volume = 0;
     const std::string fd = resourceDir();
@@ -1003,8 +1069,10 @@ int main(int argc, char** argv) {
     glfwSetDropCallback(w, [](GLFWwindow*, int n, const char** paths) {
         if (!gApp || n < 1) return;
         const std::string p = paths[0];
-        if (gApp->tab == 1) {
+        const std::string ext = std::filesystem::path(p).extension().string();
+        if (ext != ".wav" && ext != ".WAV") {   // a video to transmit; a .wav is IQ to receive
             gApp->videoPath = p;
+            gApp->txSource = 0;
         } else {
             gApp->iqPath = p;
             gApp->srcKind = 0;
@@ -1042,6 +1110,12 @@ int main(int argc, char** argv) {
         glClearColor(0.055f, 0.058f, 0.062f, 1);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        if (app.wantPopout != app.popout.isOpen()) {
+            if (app.wantPopout) app.wantPopout = app.popout.open(w, !app.hidden);
+            else app.popout.close();
+        }
+        app.popout.draw(w, app.havePic && app.rx.running() ? app.video.texture() : 0, app.video.width(), app.video.height());
+        app.wantPopout = app.popout.isOpen();
         if (report && glfwGetTime() - t0 > nextReport) {
             nextReport += 1.0;
             printReport(app, glfwGetTime() - t0);
@@ -1059,6 +1133,7 @@ int main(int argc, char** argv) {
             startTx(app);
             gapStart = 0;
         }
+        if (!shot.empty() && app.popout.isOpen() && glfwGetTime() - t0 > shotAfter - 0.2) app.popout.shotNext(shot.substr(0, shot.size() - 4) + "_popout.png");
         if (!shot.empty() && glfwGetTime() - t0 > shotAfter) {
             writeShot(w, shot);
             break;
