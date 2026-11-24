@@ -29,5 +29,6 @@ KAVL's own code is under the KAVL Source Licence (`LICENSE`). These parts come f
 |---|---|---|
 | rtl_tcp (librtlsdr) | GPL 2 or later | RTL-SDR dongles: the app starts it and reads its IQ over a local network socket |
 | FFmpeg 8.0 (`ffmpeg`, `ffprobe`) | LGPL 2.1 or later | encoding a video file or the camera for transmission. Bundled in KAVL.app/Contents/MacOS as separate programs. |
+| rigctld (Hamlib) | GPL 2 or later (the Hamlib library: LGPL 2.1 or later) | rig control (Radio > Rig control): the app starts it, or finds one running, and talks to it over a local network socket. Not bundled; installed by the user (`brew install hamlib`). |
 
 The bundled FFmpeg is built by `tools/build_ffmpeg.sh` from the unchanged FFmpeg 8.0 source (https://ffmpeg.org/releases/ffmpeg-8.0.tar.xz) with one line changed for SVT-AV1 4 (`enable_adaptive_quantization` is now `aq_mode`; the script makes the change). It is built without `--enable-gpl` and without `--enable-nonfree`, so it is LGPL only. The script shows exactly how it was configured; with it and the source anyone can rebuild it and swap it in. The LGPL text is in KAVL.app/Contents/Resources/licences.

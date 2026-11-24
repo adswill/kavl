@@ -116,7 +116,10 @@ void transmitPanel(App& a, float w, float h) {
         // the frequency, the gain and the amplifier follow at once while transmitting
         if (a.txDest != 1) {
             ImGui::SetNextItemWidth(-1);
-            if (ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz") && txRun) a.tx.setFrequency(txRadioHz(a));
+            if (ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz")) {
+                if (txRun) a.tx.setFrequency(txRadioHz(a));
+                if (a.rigCfg.follow == 2) rigFollow(a);
+            }
             ImGui::SetItemTooltip("Transmit frequency (on the air); changes at once while transmitting");
         }
         if (a.txDest == 0) {
@@ -135,7 +138,8 @@ void transmitPanel(App& a, float w, float h) {
         const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec && a.tx.overlaySignature() == callsignSig(a);
         const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
         const bool convOk = a.txDest != 0 || txRadioHz(a) >= 1e6;   // through a converter, the HackRF must have something to tune
-        const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty()) && convOk && !a.txStopping;
+        const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty()) && convOk && !a.txStopping &&
+                              !a.txPending;
         if (!txRun) {
             if (actionButton(a, a.txDest != 1 ? "Start transmitting" : "Write the IQ file", Action::Primary, canStart)) startTx(a);
             if (!canStart) {   // say what is missing
@@ -148,6 +152,12 @@ void transmitPanel(App& a, float w, float h) {
                                   : !convOk                                            ? "Check the converter's LO: the HackRF has no frequency to tune."
                                                                                        : "";
                 if (*why) ImGui::TextDisabled("%s", why);
+            }
+            if (a.txPending) ImGui::TextColored(pal::warnAmber(), "Keying the rig (PTT)...");
+            if (!a.txNote.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
+                ImGui::TextWrapped("%s", a.txNote.c_str());
+                ImGui::PopStyleColor();
             }
             if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec || a.tx.overlaySignature() != callsignSig(a)))
                 ImGui::TextColored(pal::warnAmber(), "The profile, protection or callsign changed: encode again.");

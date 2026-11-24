@@ -8,6 +8,8 @@
 #include <mach-o/dyld.h>
 #include "kavl/kavl_fec.h"
 
+#include <chrono>
+#include <thread>
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -69,6 +71,21 @@ void loadSettings(App& a) {
     a.rtl.gainTenthsDb = static_cast<int>(c.num("rtl.gain", -1));
     a.rtl.ppm = static_cast<int>(c.num("rtl.ppm", 0));
     a.rtl.biasTee = c.flag("rtl.biasTee", false);
+    {
+        RigSettings& r = a.rigCfg;
+        r.mode = std::clamp(static_cast<int>(c.num("rig.mode", 0)), 0, 2);
+        r.host = c.str("rig.host", "127.0.0.1");
+        r.port = static_cast<int>(c.num("rig.port", 4532));
+        r.model = static_cast<int>(c.num("rig.model", 1));
+        r.device = c.str("rig.device", "");
+        r.baud = static_cast<int>(c.num("rig.baud", 0));
+        r.pttType = std::clamp(static_cast<int>(c.num("rig.pttType", 0)), 0, 2);
+        r.ptt = c.flag("rig.ptt", true);
+        r.leadMs = std::clamp(static_cast<int>(c.num("rig.leadMs", 100)), 0, 2000);
+        r.tailMs = std::clamp(static_cast<int>(c.num("rig.tailMs", 100)), 0, 2000);
+        r.follow = std::clamp(static_cast<int>(c.num("rig.follow", 0)), 0, 2);
+        if (r.mode) a.rig.start(r);   // as it was left
+    }
     for (auto [k, v] : {std::pair<const char*, Converter*>{"rx.conv", &a.rxConv}, {"tx.conv", &a.txConv}}) {
         v->on = c.flag(std::string(k) + ".on", false);
         v->loMHz = c.num(std::string(k) + ".loMHz", 0.0);
@@ -125,6 +142,17 @@ void saveSettings(App& a) {
     c.set("rtl.gain", a.rtl.gainTenthsDb);
     c.set("rtl.ppm", a.rtl.ppm);
     c.set("rtl.biasTee", a.rtl.biasTee);
+    c.set("rig.mode", a.rigCfg.mode);
+    c.set("rig.host", a.rigCfg.host);
+    c.set("rig.port", a.rigCfg.port);
+    c.set("rig.model", a.rigCfg.model);
+    c.set("rig.device", a.rigCfg.device);
+    c.set("rig.baud", a.rigCfg.baud);
+    c.set("rig.pttType", a.rigCfg.pttType);
+    c.set("rig.ptt", a.rigCfg.ptt);
+    c.set("rig.leadMs", a.rigCfg.leadMs);
+    c.set("rig.tailMs", a.rigCfg.tailMs);
+    c.set("rig.follow", a.rigCfg.follow);
     for (auto [k, v] : {std::pair<const char*, Converter*>{"rx.conv", &a.rxConv}, {"tx.conv", &a.txConv}}) {
         c.set(std::string(k) + ".on", v->on);
         c.set(std::string(k) + ".loMHz", v->loMHz);
@@ -296,6 +324,7 @@ void setRxFrequency(App& a, double hz, Tune how) {
         a.rx.source()->setFrequency(rxRadioHz(a));
         a.rx.retuned();
     }
+    if (a.rigCfg.follow == 1) rigFollow(a);
 }
 
 void undoTune(App& a) {
@@ -312,6 +341,10 @@ void stopTxAsync(App& a) {
     a.txStopping = true;
     a.txStopTh = std::thread([&a] {
         a.tx.stop();
+        if (a.txKeyed.exchange(false)) {   // the tail time, then the rig back to receive
+            std::this_thread::sleep_for(std::chrono::milliseconds(std::max(0, a.rigCfg.tailMs)));
+            a.rig.setPtt(false);
+        }
         a.txStopping = false;
     });
 }
@@ -355,6 +388,7 @@ void startRx(App& a) {
     }
     a.rx.setInvert((a.srcKind == 1 || a.srcKind == 2) && a.rxConv.on && a.rxConv.invert);
     if (!a.rx.start(std::move(src), a.profile)) a.rxError = a.rx.error();
+    if (a.rigCfg.follow == 1) rigFollow(a);
     a.havePic = false;
     a.specView.clear();
 }
@@ -367,7 +401,10 @@ std::string callsignImage(const App& a) {
 }
 std::string callsignSig(const App& a) { return a.cs.on && !a.cs.text.empty() ? a.cs.signature() : std::string(); }
 
-void startTx(App& a) {
+namespace {
+bool wantPtt(const App& a) { return a.rig.active() && a.rigCfg.ptt && a.txDest == 0; }   // on the air only, not loopback or a file
+
+void startTxNow(App& a) {
     TxEngine::Dest d;
     d.toFile = a.txDest == 1;
     d.loopback = a.txDest == 2;
@@ -386,6 +423,45 @@ void startTx(App& a) {
                             : a.microphones[static_cast<size_t>(a.microphone)].index;
         a.tx.startLive(d, a.txProfile, a.txFec, cam, mic, a.liveFps ? 60 : 30, callsignImage(a));
     }
+}
+}  // namespace
+
+void startTx(App& a) {
+    a.txNote.clear();
+    rigFollow(a);
+    if (!wantPtt(a)) {
+        startTxNow(a);
+        return;
+    }
+    a.rig.setPtt(true);
+    a.txPending = true;
+    a.txPendingSince = ImGui::GetTime();
+    a.pttOnAt = -1;
+}
+
+void pollTxStart(App& a) {
+    if (!a.txPending) return;
+    const double now = ImGui::GetTime();
+    if (a.rig.status().ptt) {
+        if (a.pttOnAt < 0) a.pttOnAt = now;
+        if (now - a.pttOnAt < a.rigCfg.leadMs / 1000.0) return;   // the sequencer's lead time
+        a.txPending = false;
+        a.txKeyed = true;
+        startTxNow(a);
+        if (!a.tx.running()) {   // it did not start: do not leave the rig keyed
+            a.rig.setPtt(false);
+            a.txKeyed = false;
+        }
+    } else if (now - a.txPendingSince > 2.0) {   // never transmit into an amplifier or relay that did not switch
+        a.txPending = false;
+        a.rig.setPtt(false);
+        a.txNote = "The rig did not key (PTT), so nothing was sent. Check Radio > Rig control.";
+    }
+}
+
+void rigFollow(App& a) {
+    if (a.rigCfg.follow == 1) a.rig.setFrequency(a.freqMHz * 1e6);
+    else if (a.rigCfg.follow == 2) a.rig.setFrequency(a.txFreqMHz * 1e6);
 }
 
 // Send this Mac's test pattern to its own receiver: a picture within seconds, no radio needed (the quickest way to see what KAVL does).

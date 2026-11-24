@@ -29,8 +29,10 @@ void printReport(App& a, double t) {
     const auto st = a.rx.stats();
     const auto ps = a.player.status();
     const auto ts = a.tx.status();
-    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f snd=%ld restarts=%ld dropped=%.1f id=%s w=%.1f | tx frames=%ld underruns=%ld\n", t, st.frames,
-                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ps.audioPackets, st.restarts, st.droppedSec, st.callsign.empty() ? "-" : st.callsign.c_str(), a.rx.signalWidthHz() / 1e3, ts.frames, ts.underruns);
+    const auto rs = a.rig.status();
+    const std::string rig = !a.rig.active() ? "-" : !rs.connected ? "connecting" : (rs.ptt ? "ptt@" : "rx@") + std::to_string(std::lround(rs.rigHz));
+    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f snd=%ld restarts=%ld dropped=%.1f id=%s w=%.1f rig=%s | tx frames=%ld underruns=%ld\n", t, st.frames,
+                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ps.audioPackets, st.restarts, st.droppedSec, st.callsign.empty() ? "-" : st.callsign.c_str(), a.rx.signalWidthHz() / 1e3, rig.c_str(), ts.frames, ts.underruns);
     std::fflush(stdout);
 }
 
@@ -57,6 +59,8 @@ int main(int argc, char** argv) {
     double shotAfter = 8.0;
     bool hidden = false, mute = false, loopback = false, report = false, popoutArg = false;
     int profile = -1, tab = -1, fecArg = -1;
+    int rxProfileArg = -2;
+    int rigModelArg = 0;   // --rx-profile N: the receiver's own (-1 Auto), after --profile
     double runFor = 0, gapStop = 0, gapStart = 0;
     int winW = 1600, winH = 950;   // --size WxH (checks at other window sizes)
     float textScaleArg = 0;        // --text-scale F (checks)
@@ -69,6 +73,8 @@ int main(int argc, char** argv) {
         auto val = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
         if (k == "--file") file = val();
         else if (k == "--profile") profile = std::clamp(std::atoi(val().c_str()), 0, kavl::kNumVideoProfiles - 1);
+        else if (k == "--rig") rigModelArg = std::atoi(val().c_str());   // KAVL starts rigctld for this Hamlib model (1 = simulated rig)
+        else if (k == "--rx-profile") rxProfileArg = std::clamp(std::atoi(val().c_str()), -1, kavl::kNumVideoProfiles - 1);   // -1 = Auto
         else if (k == "--shot") shot = val();
         else if (k == "--shot-after") shotAfter = std::atof(val().c_str());
         else if (k == "--hidden") hidden = true;
@@ -115,6 +121,14 @@ int main(int argc, char** argv) {
     if (!shot.empty() || hidden) app.cfg = Settings();   // checks start from the defaults
     else loadSettings(app);
     if (profile >= 0) app.profile = app.txProfile = profile;
+    if (rxProfileArg >= -1) app.profile = rxProfileArg;
+    if (rigModelArg > 0) {
+        app.rigCfg.mode = 2;
+        app.rigCfg.model = rigModelArg;
+        app.rigCfg.follow = 1;
+        app.rig.start(app.rigCfg);
+        app.showRig = true;
+    }
     if (tab == 1) app.showTx = true;   // --tab tx: the transmit column on show (both are, on the combined screen)
     app.hidden = hidden;
     if (textScaleArg > 0) app.textScale = std::clamp(textScaleArg, 0.9f, 1.3f);
@@ -241,6 +255,7 @@ int main(int argc, char** argv) {
     app.rx.stop();
     waitTxStop(app);
     app.tx.stop();
+    app.rig.stop();   // PTT released, rigctld stopped if KAVL started it
     if (app.camTh.joinable()) app.camTh.join();
     if (shot.empty() && !hidden) saveSettings(app);
     if (app.csTex) glDeleteTextures(1, &app.csTex);

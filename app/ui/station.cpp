@@ -37,6 +37,10 @@ void statusBar(App& a) {
              prof >= 0 ? (std::string("  ") + kavl::videoProfile(prof).name).c_str() : "",
              locked && !st.callsign.empty() ? (std::string("  from ") + st.callsign).c_str() : "");
     }
+    if (a.rig.active()) {
+        const auto rs = a.rig.status();
+        part(!rs.connected ? pal::warnAmber() : rs.ptt ? pal::badRed() : pal::okGreen(), "Rig %s", !rs.connected ? "not connected" : rs.ptt ? "PTT" : "ready");
+    }
     if (!a.tx.running()) part(pal::grey(), "TX off");
     else if (a.txDest == 0) {   // on the air: a solid red pill, the status line's ON AIR light
         char t[64];
@@ -90,7 +94,7 @@ void aboutWindows(App& a) {
                 "libusb - LGPL 2.1 or later, linked dynamically (the system's copy).\n\n"
                 "Inter - SIL Open Font License 1.1, Copyright (c) 2016 The Inter Project Authors.\n\n"
                 "JetBrains Mono - SIL Open Font License 1.1, Copyright 2020 The JetBrains Mono Project Authors.\n\n"
-                "Separate programs the app runs, not part of it: rtl_tcp (librtlsdr, GPL 2) for RTL-SDR dongles, and FFmpeg 8.0 (LGPL 2.1, bundled; built by tools/build_ffmpeg.sh from the ffmpeg.org source) for encoding.\n\n"
+                "Separate programs the app runs, not part of it: rtl_tcp (librtlsdr, GPL 2) for RTL-SDR dongles, rigctld (Hamlib, GPL 2) for rig control, and FFmpeg 8.0 (LGPL 2.1, bundled; built by tools/build_ffmpeg.sh from the ffmpeg.org source) for encoding.\n\n"
                 "Full texts: THIRD_PARTY.md and the licences folder.");
         }
         ImGui::End();
@@ -107,6 +111,7 @@ void frame(App& a) {
     if (a.chooser.poll(2, picked)) a.videoPath = picked, a.txSource = 0;
     if (a.chooser.poll(3, picked)) a.txFilePath = picked;
     if (a.chooser.poll(4, picked)) a.cs.font = picked;
+    pollTxStart(a);   // a start waiting for the rig to key
     a.tx.setStationId(a.cs.text);   // the callsign goes in every frame header (station ID), whether or not it is on the picture
     takeSnapshot(a);   // one read of the engines' status for the whole frame
     uploadPicture(a);
@@ -165,6 +170,8 @@ void frame(App& a) {
         if (ImGui::BeginMenu("Radio")) {
             if (ImGui::MenuItem("Look for radios again")) refreshDevices(a);
             ImGui::TextDisabled("RTL-SDR: %zu, HackRF: %zu", a.rtlDevs.size(), a.hrfDevs.size());
+            ImGui::Separator();
+            if (ImGui::MenuItem("Rig control (CAT, PTT)...", nullptr, a.showRig)) a.showRig = !a.showRig;
             ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
@@ -211,6 +218,7 @@ void frame(App& a) {
         drawVideo(a, ImGui::GetContentRegionAvail(), false);
         ImGui::End();
         aboutWindows(a);
+        rigWindow(a);
         return;
     }
     // the station: Receive on the left, the picture and the spectrum in the middle, Transmit on the right, the status line at the bottom
@@ -249,4 +257,5 @@ void frame(App& a) {
     statusBar(a);
     ImGui::End();
     aboutWindows(a);
+    rigWindow(a);
 }

@@ -59,9 +59,9 @@ if(KAVL_BUILD_APP)
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/JetBrainsMono-Regular.ttf)
   add_executable(kavl MACOSX_BUNDLE app/main.cpp
     app/engine/player.cpp app/engine/rx_engine.cpp app/engine/tx_engine.cpp app/engine/sources.cpp app/engine/settings.cpp app/engine/live_feed.cpp
-    app/engine/loopback.cpp app/engine/callsign.cpp
+    app/engine/loopback.cpp app/engine/callsign.cpp app/engine/rig.cpp
     app/ui/app.cpp app/ui/widgets.cpp app/ui/picture.cpp app/ui/receive_panel.cpp app/ui/transmit_panel.cpp app/ui/callsign_editor.cpp app/ui/station.cpp
-    app/ui/spectrum_view.cpp app/ui/video_gl.cpp app/ui/video_popout.cpp
+    app/ui/spectrum_view.cpp app/ui/video_gl.cpp app/ui/video_popout.cpp app/ui/rig_window.cpp
     ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/backends/imgui_impl_glfw.cpp ${IMGUI}/backends/imgui_impl_opengl3.cpp ${FONTS})
   set_source_files_properties(${FONTS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -78,4 +78,8 @@ if(KAVL_BUILD_APP)
     GL_SILENCE_DEPRECATION)
   target_link_libraries(kavl PRIVATE kavlcore PkgConfig::GLFW PkgConfig::DAV1D PkgConfig::OPUS PkgConfig::HACKRF PkgConfig::LIBUSB
     "-framework OpenGL" "-framework Cocoa" "-framework IOKit" "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation")
+  # rig control against Hamlib's simulated rig (skips when Hamlib is not installed)
+  add_executable(test_kavl_rig tests/test_kavl_rig.cpp app/engine/rig.cpp)
+  target_include_directories(test_kavl_rig PRIVATE app/engine)
+  add_test(NAME kavl_rig COMMAND test_kavl_rig)
 endif()

@@ -28,7 +28,7 @@ eval "$("$BREW" shellenv)"
 echo "found at $BREW"
 
 step "3/4 Libraries"
-PKGS=(cmake ninja pkgconf glfw dav1d opus hackrf libusb svt-av1 librtlsdr ffmpeg)
+PKGS=(cmake ninja pkgconf glfw dav1d opus hackrf libusb svt-av1 librtlsdr ffmpeg hamlib)   # hamlib: rig control (rigctld)
 missing=()
 for p in "${PKGS[@]}"; do brew list --versions "$p" >/dev/null 2>&1 || missing+=("$p"); done
 if [ ${#missing[@]} -gt 0 ]; then

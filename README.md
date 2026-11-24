@@ -110,13 +110,13 @@ Not yet: the app uses macOS's camera, screen and audio frameworks, and has only 
 ### Building by hand (developers)
 
 ```bash
-brew install cmake ninja pkgconf glfw dav1d opus hackrf libusb svt-av1 librtlsdr ffmpeg
+brew install cmake ninja pkgconf glfw dav1d opus hackrf libusb svt-av1 librtlsdr ffmpeg hamlib
 cmake -S . -B build -G Ninja
 cmake --build build
 open build/KAVL.app
 ```
 
-A built app uses Homebrew's `ffmpeg` (it runs it as a separate program) and `rtl_tcp` for RTL-SDR dongles. To make an app that carries its own LGPL FFmpeg and runs on a Mac without Homebrew, build FFmpeg once from the FFmpeg 8.0 source (https://ffmpeg.org/releases/ffmpeg-8.0.tar.xz) before building the app:
+A built app uses Homebrew's `ffmpeg` (it runs it as a separate program), `rtl_tcp` for RTL-SDR dongles and Hamlib's `rigctld` for rig control. To make an app that carries its own LGPL FFmpeg and runs on a Mac without Homebrew, build FFmpeg once from the FFmpeg 8.0 source (https://ffmpeg.org/releases/ffmpeg-8.0.tar.xz) before building the app:
 
 ```bash
 tools/build_ffmpeg.sh /path/to/ffmpeg-8.0
@@ -174,6 +174,8 @@ The frequency, the gains, the amplifier, the bias tee and the ppm correction cha
 4. Choose where to send: HackRF (frequency, TX gain, amplifier), IQ file, or Loopback (into this Mac's receiver). Then start.
 
 **Callsign.** Type your callsign in Transmit > Callsign and it goes out in every frame header (station identification): two characters a frame, the whole callsign within 8 frames, using none of the payload, and it decodes whenever the signal locks. Receivers show it as Station in the Signal section and in the status line. Up to 16 of A-Z, 0-9, / and -. **Also on the picture** burns it into the picture you send as well: drag it on the preview to place it, drag its corner or use the mouse wheel to size it, and choose the font (the app's own, or any TTF/OTF file), the colour and a dark edge. A video file carries it from Encode for this profile; change it and encode again.
+
+**Rig control.** Radio > Rig control connects a transceiver through Hamlib's `rigctld` (most rigs with a CAT port; Hamlib's model number from `rigctl -l`, e.g. 3085 IC-705, 3081 IC-9700, 1035 FT-991; 1 is a simulated rig to try it). KAVL either starts rigctld for the rig's serial port or uses one that already runs. While transmitting on the air it keys the rig (PTT, by CAT or the RTS/DTR line) for a sequencer, amplifier or preamp relay, waits the lead time before the first sample and the tail time after the last, and sends nothing if the rig did not key. The rig can follow the receive or the transmit frequency. If KAVL is closed the normal way it releases PTT; if it crashes while transmitting the rig may stay keyed, so keep the rig's transmit time-out on.
 
 The frequency, the TX gain and the amplifier change at once while transmitting. A video file repeats until you stop it. A live programme uses SVT-AV1 in real-time mode at the profile's bit rate. On an M2 Pro every profile encodes in real time, 4K120 included. The picture is softer than a slow file encode at the same bit rate. Transmit only where your licence and the band plan allow it.
 

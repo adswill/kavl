@@ -16,6 +16,7 @@
 #include "callsign.h"
 #include "live_feed.h"
 #include "player.h"
+#include "rig.h"
 #include "rx_engine.h"
 #include "settings.h"
 #include "sources.h"
@@ -131,6 +132,14 @@ struct App {
     double freqMHz = 433.0;
     int profile = -1;   // -1 = Auto
     std::string rxError;
+    // rig control (CAT through rigctld): PTT keyed around transmitting, the rig's frequency following ours
+    RigSettings rigCfg;
+    RigControl rig;
+    bool showRig = false;
+    bool txPending = false;      // Start pressed, waiting for the rig to key (PTT) and the lead time
+    double txPendingSince = 0, pttOnAt = -1;
+    std::atomic<bool> txKeyed{false};   // KAVL keyed the rig for this transmission (released after the tail time)
+    std::string txNote;          // why a start did not happen
     float volume = 1.f;
     RtlSettings rtl;
     HackRfSettings hrf;
@@ -195,7 +204,10 @@ void waitTxStop(App& a);
 void startRx(App& a);
 std::string callsignImage(const App& a);
 std::string callsignSig(const App& a);
-void startTx(App& a);
+void startTx(App& a);           // keys the rig first when rig PTT is on, then starts (pollTxStart)
+void pollTxStart(App& a);       // every frame: starts the transmitter once the rig has keyed and the lead time passed
+void rigFollow(App& a);         // the rig to the receive or transmit frequency, if it follows one
+void rigWindow(App& a);
 void tryLoopback(App& a);
 // ---- widgets.cpp ----
 void lamp(ImVec4 col);
