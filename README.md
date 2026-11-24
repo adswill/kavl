@@ -39,7 +39,7 @@ brew install cmake ninja glfw dav1d opus hackrf libusb
 ```
 
 - RTL-SDR dongles need `rtl_tcp`: `brew install librtlsdr`.
-- Transmitting a video needs `ffmpeg` with SVT-AV1 and Opus: `brew install ffmpeg`.
+- Transmitting a video or the camera needs `ffmpeg` with SVT-AV1 and Opus: `brew install ffmpeg`.
 
 ## Build
 
@@ -71,12 +71,15 @@ The picture plays after the first key frame and two seconds of buffer. Record IQ
 
 **Transmit**
 
-1. Drop a video file on the window or choose one.
-2. Choose the profile and press Encode.
+1. Choose the programme:
+   - **Video file**: drop it on the window or choose one, then press Encode for the profile.
+   - **Camera (live)**: a camera and a microphone, encoded while transmitting. macOS asks once for access.
+   - **Test pattern (live)**: a moving pattern and a 1 kHz tone, no camera needed.
+2. Choose the profile.
 3. Choose the protection: none, 1 frame in 16 or 2 frames in 32 (6.25 % of the bits), or 1 frame in 8 (12.5 %). Any lost frame of a group is rebuilt, from a burst of interference or a fade.
 4. Choose HackRF (frequency, TX gain, amplifier) or IQ file, then start.
 
-The programme repeats until you stop it. Transmit only where your licence and the band plan allow it.
+A video file repeats until you stop it. A live programme uses SVT-AV1 in real-time mode at the profile's bit rate. On an M2 Pro every profile encodes in real time, 4K120 included. The picture is softer than a slow file encode at the same bit rate. Transmit only where your licence and the band plan allow it.
 
 An RTL-SDR on the Receive tab can receive the HackRF's transmission at the same time.
 

@@ -10,6 +10,7 @@
 #pragma once
 #include "kavl/kavl_av.h"
 #include "kavl/kavl_phy.h"
+#include "live_feed.h"
 
 #include <atomic>
 #include <deque>
@@ -38,6 +39,10 @@ public:
         std::string serial;        // HackRF serial, empty = the first one
     };
     bool start(const Dest& d);
+    // Live: camera (or the test pattern, camera < 0) and microphone (-1 = none) encoded in real time for the profile while transmitting.
+    bool startLive(const Dest& d, int profile, int fecIdx, int camera, int mic, int fps);
+    bool live() const { return live_; }
+    LiveFeed::Status liveStatus() { return feed_.status(); }
     void stop();
     bool running() const { return running_; }
     struct Status {
@@ -69,6 +74,8 @@ private:
     std::mutex stMtx_;
     Status st_;
     void* dev_ = nullptr;
+    LiveFeed feed_;
+    std::atomic<bool> live_{false};
 public:
     // called from the HackRF thread
     int fill(uint8_t* buf, int len);

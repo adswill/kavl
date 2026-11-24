@@ -9,6 +9,7 @@
 #include <libhackrf/hackrf.h>
 
 #include <chrono>
+#include <deque>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -148,9 +149,31 @@ int TxEngine::fill(uint8_t* buf, int len) {
     return 0;
 }
 
-bool TxEngine::start(const Dest& d) {
+bool TxEngine::startLive(const Dest& d, int profile, int fecIdx, int camera, int mic, int fps) {
     stop();
-    if (!ready_) return false;
+    profile_ = profile;
+    fec_ = fecIdx;
+    const kavl::VideoProfile& vp = kavl::videoProfile(profile);
+    // real-time AV1 is less efficient than the slow file encodes: the same budget, a softer picture
+    if (!feed_.start(camera, mic, vp.width, vp.height, std::min(vp.fps, fps), kavl::videoKbps(vp, fecIdx))) {
+        std::lock_guard<std::mutex> sl(stMtx_);
+        st_.message = feed_.error();
+        return false;
+    }
+    live_ = true;
+    programmeMs_ = 0;
+    opusHead_.clear();
+    if (!start(d)) {
+        feed_.stop();
+        live_ = false;
+        return false;
+    }
+    return true;
+}
+
+bool TxEngine::start(const Dest& d) {
+    if (!live_) stop();
+    if (!ready_ && !live_) return false;
     quit_ = false;
     {
         std::lock_guard<std::mutex> sl(stMtx_);
@@ -183,7 +206,7 @@ bool TxEngine::start(const Dest& d) {
         st_.sampleRate = rate;
         st_.payloadMbps = kavl::netBitRate(*kavl::modcod(vp.modcod), vp.symRate) / 1e6;
         st_.programmeSec = programmeMs_ / 1000.0;
-        st_.message = d.toFile ? "Writing " + d.path : "Transmitting";
+        st_.message = std::string(live_ ? "Live: " : "") + (d.toFile ? "writing " + d.path : "transmitting");
     }
     running_ = true;
     txTh_ = std::thread([this, d] { modulateLoop(d); });
@@ -204,6 +227,8 @@ bool TxEngine::start(const Dest& d) {
 void TxEngine::stop() {
     quit_ = true;
     if (txTh_.joinable()) txTh_.join();
+    feed_.stop();
+    live_ = false;
     if (dev_) {
         hackrf_stop_tx(static_cast<hackrf_device*>(dev_));
         hackrf_close(static_cast<hackrf_device*>(dev_));
@@ -252,7 +277,35 @@ void TxEngine::modulateLoop(Dest d) {
     int seq = 0;
     long loops = 0;
     int tailFrames = 0;
+    std::deque<kavl::av::Packet> liveV, liveA;
     auto makeFrame = [&]() {
+        if (live_) {   // everything that arrived goes out at once, in time order; padding when nothing is waiting
+            std::vector<kavl::av::Packet> v, a;
+            feed_.take(v, a, opusHead_);
+            for (auto& p : v) liveV.push_back(std::move(p));
+            for (auto& p : a) liveA.push_back(std::move(p));
+            while (!liveV.empty() || !liveA.empty()) {
+                const bool tv = liveA.empty() || (!liveV.empty() && liveV.front().ptsMs <= liveA.front().ptsMs);
+                kavl::av::Packet p = std::move(tv ? liveV.front() : liveA.front());
+                (tv ? liveV : liveA).pop_front();
+                if (!opusHead_.empty() && p.ptsMs >= nextCfg) {
+                    kavl::av::Packet c;
+                    c.type = kavl::av::kAudioConfig;
+                    c.ptsMs = p.ptsMs;
+                    c.data = opusHead_;
+                    mux.push(c);
+                    nextCfg = p.ptsMs + 1000;
+                }
+                mux.push(p);
+            }
+            const auto pay = mux.takeFrame(!mux.frameReady());
+            kavl::Header h;
+            h.modcod = mc.id;
+            h.fec = fec_;
+            h.seq = seq++ & 0xFFFF;
+            n++;
+            return kavl::frameSymbols(mc, h, pay.data());
+        }
         const double due = n * frameMs + leadMs;
         while (!mux.frameReady()) {
             if (vi >= vids_.size() && ai >= auds_.size()) {   // loop: the programme starts again on a continuing time line (a file holds it once)
@@ -309,7 +362,8 @@ void TxEngine::modulateLoop(Dest d) {
             }
             std::fwrite(s.data(), 2, s.size(), wav);
             wavSamples += static_cast<long long>(out.size());
-            if (vi >= vids_.size() && ai >= auds_.size() && !mux.pending() && ++tailFrames > 2) quit_ = true;   // all sent, plus the frames in flight
+            if (live_) std::this_thread::sleep_until(t0 + std::chrono::microseconds(static_cast<long long>(n * frameMs * 1000.0)));   // live: real time
+            else if (vi >= vids_.size() && ai >= auds_.size() && !mux.pending() && ++tailFrames > 2) quit_ = true;   // all sent, plus the frames in flight
         } else {
             // the HackRF wants int8; peaks of the shaped signal stay inside with the data at a quarter of full scale (peaks about 3.5 x)
             std::vector<int8_t> b(out.size() * 2);

@@ -18,6 +18,7 @@
 #include "rx_engine.h"
 #include "settings.h"
 #include "theme.h"
+#include "live_feed.h"
 #include "tx_engine.h"
 #include "video_gl.h"
 #include "kavl/kavl_fec.h"
@@ -138,6 +139,10 @@ struct App {
     // transmit
     std::string videoPath, txFilePath;
     int txProfile = 4, txDest = 0, txGain = 20, txHrfDev = 0, txFec = 0;
+    int txSource = 0;   // 0 video file, 1 camera (live), 2 test pattern (live)
+    int camera = 0, microphone = 0, liveFps = 0;   // liveFps: 0 = 30, 1 = 60
+    std::vector<CaptureDevice> cameras, microphones;
+    bool devicesListed = false;
     double txFreqMHz = 433.0;
     bool txAmp = false;
     // view
@@ -180,6 +185,10 @@ void loadSettings(App& a) {
     a.txAmp = c.flag("tx.amp", false);
     a.txDest = static_cast<int>(c.num("tx.dest", 0));
     a.txFec = std::clamp(static_cast<int>(c.num("tx.fec", 0)), 0, kavl::fec::kNumProfiles - 1);
+    a.txSource = std::clamp(static_cast<int>(c.num("tx.source", 0)), 0, 2);
+    a.liveFps = static_cast<int>(c.num("tx.liveFps", 0));
+    a.camera = static_cast<int>(c.num("tx.camera", 0));
+    a.microphone = static_cast<int>(c.num("tx.microphone", 0));
     a.showWaterfall = c.flag("view.waterfall", true);
 }
 
@@ -207,6 +216,10 @@ void saveSettings(App& a) {
     c.set("tx.amp", a.txAmp);
     c.set("tx.dest", a.txDest);
     c.set("tx.fec", a.txFec);
+    c.set("tx.source", a.txSource);
+    c.set("tx.liveFps", a.liveFps);
+    c.set("tx.camera", a.camera);
+    c.set("tx.microphone", a.microphone);
     c.set("view.waterfall", a.showWaterfall);
     c.save();
 }
@@ -558,13 +571,52 @@ void transmitPage(App& a, float h) {
     const float colW = std::min(820.f, ImGui::GetContentRegionAvail().x);
     ImGui::BeginChild("##txcol", ImVec2(colW, 0));
     heading(a, "1. Programme");
-    ImGui::TextDisabled("Drop a video file on the window, or");
+    const bool txBusy = a.tx.preparing() || a.tx.running();
+    if (txBusy) ImGui::BeginDisabled();
+    ImGui::RadioButton("Video file", &a.txSource, 0);
     ImGui::SameLine();
-    if (ImGui::Button("Choose a video...")) a.chooser.open(2, "Choose a video to transmit", false);
-    ImGui::TextUnformatted(a.videoPath.empty() ? "(no video chosen)" : a.videoPath.c_str());
+    ImGui::RadioButton("Camera (live)", &a.txSource, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton("Test pattern (live)", &a.txSource, 2);
+    if (txBusy) ImGui::EndDisabled();
+    if (a.txSource == 0) {
+        ImGui::TextDisabled("Drop a video file on the window, or");
+        ImGui::SameLine();
+        if (ImGui::Button("Choose a video...")) a.chooser.open(2, "Choose a video to transmit", false);
+        ImGui::TextUnformatted(a.videoPath.empty() ? "(no video chosen)" : a.videoPath.c_str());
+    } else {
+        if (a.txSource == 1 && !a.devicesListed) {
+            listCaptureDevices(a.cameras, a.microphones);
+            a.devicesListed = true;
+        }
+        if (txBusy) ImGui::BeginDisabled();
+        if (a.txSource == 1) {
+            if (a.cameras.empty()) {
+                ImGui::TextColored(pal::warnAmber(), "No camera found (ffmpeg is needed: brew install ffmpeg).");
+            } else {
+                ImGui::SetNextItemWidth(260);
+                ImGui::Combo("Camera", &a.camera, [](void* d, int i) { return (*static_cast<std::vector<CaptureDevice>*>(d))[static_cast<size_t>(i)].name.c_str(); },
+                             &a.cameras, static_cast<int>(a.cameras.size()));
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(220);
+                int mic = a.microphone + 1;   // 0 = no sound
+                std::vector<std::string> names = {"No sound"};
+                for (const auto& m : a.microphones) names.push_back(m.name);
+                if (ImGui::Combo("Microphone", &mic, [](void* d, int i) { return (*static_cast<std::vector<std::string>*>(d))[static_cast<size_t>(i)].c_str(); }, &names,
+                                 static_cast<int>(names.size())))
+                    a.microphone = mic - 1;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Look again")) listCaptureDevices(a.cameras, a.microphones);
+        }
+        ImGui::SetNextItemWidth(120);
+        ImGui::Combo("Frame rate", &a.liveFps, "30 fps\0" "60 fps\0");
+        if (txBusy) ImGui::EndDisabled();
+        ImGui::TextDisabled("Encoded in real time while transmitting (SVT-AV1 low delay). macOS asks once for camera and microphone access.");
+    }
     ImGui::Spacing();
     heading(a, "2. Profile");
-    const bool busy = a.tx.preparing() || a.tx.running();
+    const bool busy = txBusy;
     if (busy) ImGui::BeginDisabled();
     ImGui::SetNextItemWidth(260);
     ImGui::Combo("##txprof", &a.txProfile, [](void*, int i) { return kavl::videoProfile(i).name; }, nullptr, kavl::kNumVideoProfiles);
@@ -575,12 +627,14 @@ void transmitPage(App& a, float h) {
                  kavl::fec::kNumProfiles);
     ImGui::SetItemTooltip("Parity frames: any lost frame of a group is rebuilt (a burst of interference, a fade). Costs video bits.");
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("%dx%d at %d fps: AV1 %d kbit/s + Opus 112 kbit/s, %s, %.0f kHz wide, needs about %.1f dB", vp.width, vp.height, vp.fps,
-                       kavl::videoKbps(vp, a.txFec), kavl::modcod(vp.modcod)->name, kavl::occupiedHz(vp.symRate) / 1e3, thresholdDb(kavl::modcod(vp.modcod)));
+    ImGui::TextWrapped("%dx%d at %d fps: AV1 %d kbit/s + Opus 112 kbit/s, %s, %.0f kHz wide, needs about %.1f dB", vp.width, vp.height,
+                       a.txSource == 0 ? vp.fps : std::min(vp.fps, a.liveFps ? 60 : 30), kavl::videoKbps(vp, a.txFec), kavl::modcod(vp.modcod)->name,
+                       kavl::occupiedHz(vp.symRate) / 1e3, thresholdDb(kavl::modcod(vp.modcod)));
     ImGui::PopStyleColor();
-    if (ImGui::Button("Encode for this profile") && !a.videoPath.empty()) a.tx.prepare(a.videoPath, a.txProfile, a.txFec);
+    if (a.txSource != 0 && vp.width > 2560) ImGui::TextColored(pal::warnAmber(), "Live 4K: the real-time encoder gives a softer picture than an encoded file at the same bit rate.");
+    if (a.txSource == 0 && ImGui::Button("Encode for this profile") && !a.videoPath.empty()) a.tx.prepare(a.videoPath, a.txProfile, a.txFec);
     if (busy) ImGui::EndDisabled();
-    if (a.tx.preparing() || a.tx.ready() || !a.tx.prepareMessage().empty()) {
+    if (a.txSource == 0 && (a.tx.preparing() || a.tx.ready() || !a.tx.prepareMessage().empty())) {
         ImGui::ProgressBar(a.tx.progress(), ImVec2(-1, 0));
         ImGui::TextWrapped("%s", a.tx.prepareMessage().c_str());
     }
@@ -610,7 +664,9 @@ void transmitPage(App& a, float h) {
         ImGui::TextUnformatted(a.txFilePath.empty() ? "(no file chosen)" : a.txFilePath.c_str());
     }
     if (a.tx.running()) ImGui::EndDisabled();
-    const bool canStart = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec && (a.txDest == 0 || !a.txFilePath.empty());
+    const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec;
+    const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
+    const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest == 0 || !a.txFilePath.empty());
     if (!a.tx.running()) {
         if (!canStart) ImGui::BeginDisabled();
         if (ImGui::Button(a.txDest == 0 ? "  Start transmitting  " : "  Write the IQ file  ")) {
@@ -621,10 +677,19 @@ void transmitPage(App& a, float h) {
             d.txGainDb = a.txGain;
             d.amp = a.txAmp;
             if (!a.hrfDevs.empty() && a.txHrfDev < static_cast<int>(a.hrfDevs.size())) d.serial = a.hrfDevs[static_cast<size_t>(a.txHrfDev)].serial;
-            a.tx.start(d);
+            if (a.txSource == 0) {
+                a.tx.start(d);
+            } else {
+                const int cam = a.txSource == 2 ? -1 : a.cameras[static_cast<size_t>(std::clamp(a.camera, 0, static_cast<int>(a.cameras.size()) - 1))].index;
+                const int mic = a.txSource == 2 || a.microphone < 0 || a.microphone >= static_cast<int>(a.microphones.size())
+                                    ? -1
+                                    : a.microphones[static_cast<size_t>(a.microphone)].index;
+                a.tx.startLive(d, a.txProfile, a.txFec, cam, mic, a.liveFps ? 60 : 30);
+            }
         }
         if (!canStart) ImGui::EndDisabled();
-        if (a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec)) ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
+        if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec))
+            ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, pal::badRed());
         if (ImGui::Button("  Stop  ")) a.tx.stop();
@@ -638,6 +703,10 @@ void transmitPage(App& a, float h) {
         valueRow(a, "Sample rate", "%.3f Msps", ts.sampleRate / 1e6);
         valueRow(a, "Payload", "%.3f Mbit/s", ts.payloadMbps);
         if (ts.underruns) ImGui::TextColored(pal::warnAmber(), "Radio waited for data %ld times", ts.underruns);
+        if (a.tx.live()) {
+            const auto ls = a.tx.liveStatus();
+            valueRow(a, "Live encoder", "%.1f fps, %.2f Mbit/s, %ld sound packets", ls.fps, ls.kbps / 1e3, ls.audioPackets);
+        }
     }
     ImGui::Spacing();
     ImGui::TextDisabled("Tip: receive at the same time with an RTL-SDR on the Receive tab.");

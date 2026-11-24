@@ -12,6 +12,7 @@
   <key>NSHighResolutionCapable</key><true/>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 Kristijonas Adomaitis (adswill). All rights reserved.</string>
-  <key>NSMicrophoneUsageDescription</key><string>KAVL does not use the microphone.</string>
+  <key>NSCameraUsageDescription</key><string>KAVL transmits your camera live when you choose Camera on the Transmit tab.</string>
+  <key>NSMicrophoneUsageDescription</key><string>KAVL transmits the sound of your microphone with a live camera programme.</string>
 </dict>
 </plist>
