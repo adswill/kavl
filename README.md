@@ -1,6 +1,6 @@
 # KAVL
 
-Narrow-band digital video for radio: 360p15 in 12 kHz up to 4K120 with stereo sound in 1.25 MHz.
+Narrow-band digital video for radio that works at about 1 dB of signal-to-noise ratio: 360p15 in 100 kHz up to 4K60 in 1 MHz, with stereo sound.
 
 The KAVL app receives a KAVL signal from an RTL-SDR, a HackRF or an IQ recording and plays the picture and the sound. It also encodes a video file and transmits it with a HackRF, or writes the signal to an IQ file.
 
@@ -17,35 +17,18 @@ The KAVL app receives a KAVL signal from an RTL-SDR, a HackRF or an IQ recording
 
 ## Profiles
 
-Each profile has a normal and a robust form. The signal needed is Es/N0, the signal-to-noise ratio of the symbols, measured with 99 % of the code words intact.
+Every profile is built to work at about **1 dB** of signal-to-noise ratio, as narrow as its picture allows and never wider than 1 MHz. All use QPSK with the rate 6/15 code. The signal needed is Es/N0, measured with 99 % of the code words intact on a noise channel (`KAVL_MEASURE=1 build/test_kavl_thresholds`); 98 % arrive at 0.5 dB.
 
-| Profile | Width | Signal needed | Width (robust) | Signal needed (robust) |
+| Profile | Width | Signal needed | Video (AV1) | Sound (Opus) |
 |---|---|---|---|---|
-| 720p60 | 160 kHz | 18 dB | 230 kHz | 13.5 dB |
-| 1080p60 | 260 kHz | 18 dB | 400 kHz | 13.5 dB |
-| 1440p60 | 400 kHz | 18 dB | 560 kHz | 13.5 dB |
-| 4K60 | 650 kHz | 18 dB | 950 kHz | 13.5 dB |
-| 4K120 | 870 kHz | 18 dB | 1.25 MHz | 13.5 dB |
+| 360p15 | 100 kHz | about 1 dB | 24 kbit/s | stereo 32 kbit/s |
+| 360p30 | 150 kHz | about 1 dB | 58 kbit/s | stereo 32 kbit/s |
+| 720p60 | 290 kHz | about 1 dB | 149 kbit/s | stereo 32 kbit/s |
+| 1080p60 | 440 kHz | about 1 dB | 251 kbit/s | stereo 32 kbit/s |
+| 1440p60 | 660 kHz | about 1 dB | 402 kbit/s | stereo 32 kbit/s |
+| 4K60 | 1 MHz | about 1 dB | 636 kbit/s | stereo 32 kbit/s |
 
-Video is AV1, sound is Opus stereo at 48 kHz and 112 kbit/s. The video budget of each profile gives the same picture quality (VMAF) at every size: SVT-AV1 preset 2 with a key frame every 4 s.
-
-Two narrow profiles go much further on little power, with NUC-64 10/15 (13.5 dB) and speech-grade mono sound:
-
-| Profile | Width | Signal needed | Video | Sound | Delay | Picture after tuning |
-|---|---|---|---|---|---|---|
-| 360p30 | 24 kHz | 13.5 dB | 60 kbit/s | Opus mono 16 kbit/s | about 3.3 s | about 5 s |
-| 360p15 | 12 kHz | 13.5 dB | 25 kbit/s | Opus mono 12 kbit/s | about 6.5 s | about 10 s |
-
-Their frames last 1.4 s and 2.9 s on air, which sets the delay. A key frame comes every 4 s (more often would eat too much of so few bits). The receiver finds a narrow signal up to 20 kHz off its frequency, using the spectrum; picture quality at these rates is soft, best for faces and slow scenes.
-
-Two weak-signal profiles carry the same 1080p60 picture (the 1080p60 profile's video budget) on far less signal, still under 1 MHz:
-
-| Profile | Width | Signal needed | Transmit power against 1080p60, 260 kHz |
-|---|---|---|---|
-| 1080p60 weak (QPSK 11/15) | 950 kHz | 5.0 dB | about 7 dB less |
-| 1080p60 weak (NUC-16 8/15) | 650 kHz | 7.5 dB | about 6.5 dB less |
-
-Measured on a noise channel (`KAVL_MEASURE=1 build/test_kavl_thresholds`). An RTL-SDR at 2.4 Msps receives both.
+Live, a key frame comes every 2 s (4 s at 360p, where they would take too much of so few bits); an encoded file has them half as often. The picture is soft at these rates, most of all with fast motion and fine texture; faces and slow scenes hold up well. The video budget is what the width leaves after the sound, the packet overhead and 10 % headroom.
 
 ## Install
 
@@ -152,7 +135,7 @@ One screen holds the whole station: **Receive** on the left, the received pictur
 
 The frequency, the gains, the amplifier, the bias tee and the ppm correction change at once while receiving. When the transmission stops and comes back (even with another profile, on Auto), the receiver picks it up by itself, with no need to stop and start. Record IQ saves what the receiver gets as an IQ `.wav` in Documents/KAVL. The Receive column shows the lock, the link margin above the profile's threshold, the constellation, the signal-to-noise ratio, the frequency and clock offsets, the code words received, and the delay.
 
-**Low delay.** The picture starts 0.4 s after the first key frame and is then kept as close to the arrivals as they allow. Live from the camera's encoder to the screen measures about 0.75 s at 1440p60 (0.9 s at 720p, whose frames last longer). Protection adds one group of frames, because a group must arrive whole before it can be rebuilt: about 1.4 s for 1 in 16 at 1440p, 3.4 s at 720p. The transmitter sends its clock once a second, so a receiver on the same Mac (or on Macs with synced clocks) shows the delay.
+**Low delay.** The picture starts 0.4 s after the first key frame and is then kept as close to the arrivals as they allow. Live from the camera's encoder to the screen measures about 0.6-0.8 s from 720p60 to 4K60 over loopback (2.5-4 s at 360p, where the frames are long and the bits few). Protection adds one group of frames, because a group must arrive whole before it can be rebuilt. The transmitter sends its clock once a second, so a receiver on the same Mac (or on Macs with synced clocks) shows the delay.
 
 **Spectrum and waterfall**
 
@@ -188,7 +171,7 @@ The frequency, the gains, the amplifier, the bias tee and the ppm correction cha
 
 **Rig control.** Radio > Rig control connects a transceiver through Hamlib's `rigctld` (most rigs with a CAT port; Hamlib's model number from `rigctl -l`, e.g. 3085 IC-705, 3081 IC-9700, 1035 FT-991; 1 is a simulated rig to try it). KAVL either starts rigctld for the rig's serial port or uses one that already runs. While transmitting on the air it keys the rig (PTT, by CAT or the RTS/DTR line) for a sequencer, amplifier or preamp relay, waits the lead time before the first sample and the tail time after the last, and sends nothing if the rig did not key. The rig can follow the receive or the transmit frequency. If KAVL is closed the normal way it releases PTT; if it crashes while transmitting the rig may stay keyed, so keep the rig's transmit time-out on.
 
-The frequency, the TX gain and the amplifier change at once while transmitting. A video file repeats until you stop it. A live programme uses SVT-AV1 in real-time mode at the profile's bit rate. On an M2 Pro every profile encodes in real time, 4K120 included. The picture is softer than a slow file encode at the same bit rate. Transmit only where your licence and the band plan allow it.
+The frequency, the TX gain and the amplifier change at once while transmitting. A video file repeats until you stop it. A live programme uses SVT-AV1 in real-time mode at the profile's bit rate. On an M2 Pro every profile encodes in real time. The picture is softer than a slow file encode at the same bit rate. Transmit only where your licence and the band plan allow it.
 
 ## Tools
 
@@ -206,16 +189,14 @@ The frequency, the TX gain and the amplifier change at once while transmitting. 
 
 - Single carrier, root-raised-cosine roll-off 0.02.
 - Frames of 32400 data symbols with a known pilot every 32 symbols, a 64-symbol preamble and a 140-symbol header.
-- Error correction: ATSC 3.0 LDPC codes, 64800 bits, with non-uniform constellations (NUC-64 and NUC-256).
+- Error correction: ATSC 3.0 LDPC codes, 64800 bits. The profiles use QPSK with the rate 6/15 code; the receiver also knows rates 8/15 to 13/15 with non-uniform constellations (NUC-16 to NUC-1024), which the header can name.
 - The receiver finds frames by a differential preamble search that is blind to the frequency offset. It removes the offset before the matched filter, measures the clock drift from one preamble to the next and tracks the phase from the pilots.
 - Audio and video packets run across the code words. Each code word points to the first packet that starts in it, so a lost code word costs only the packets in it.
-- Optional protection across frames: Reed-Solomon over GF(256), groups of 8 to 32 frames with 1 or 2 parity frames. The frame header names the protection, so the receiver needs no setting. With 1 frame in 8, the 1440p60 profile still gives a perfect picture at 17.8 dB, where 2.5 % of the code words fail.
-
+- Optional protection across frames: Reed-Solomon over GF(256), groups of 8 to 32 frames with 1 or 2 parity frames. The frame header names the protection, so the receiver needs no setting.
 ## Limits
 
 - Tested with recordings and with simulated receivers: noise, frequency offset, clock offset, phase noise, IQ imbalance, DC offset and 8-bit samples. Not yet tested over the air.
 - Without protection a lost code word loses its packets, and the picture repairs itself at the next key frame.
-- The 4K120 demo is made from a 60 fps master by motion interpolation.
 - macOS only (Apple silicon tested); Windows and Linux are planned.
 - Screen readers: the app draws its own controls (Dear ImGui), so VoiceOver cannot read them. Everything can be reached from the keyboard (see the keys above), and every status colour has a word next to it.
 

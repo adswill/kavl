@@ -104,7 +104,7 @@ void loadSettings(App& a) {
     a.hrf.vga = static_cast<int>(c.num("hackrf.vga", 20));
     a.hrf.amp = c.flag("hackrf.amp", false);
     a.hrf.antennaPower = c.flag("hackrf.antennaPower", false);
-    a.txProfile = std::clamp(static_cast<int>(c.num("tx.profile", 4)), 0, kavl::kNumVideoProfiles - 1);
+    a.txProfile = std::clamp(static_cast<int>(c.num("tx.profile", 3)), 0, kavl::kNumVideoProfiles - 1);
     a.txFreqMHz = c.num("tx.freqMHz", 433.0);
     a.txGain = static_cast<int>(c.num("tx.gain", 20));
     a.txAmp = c.flag("tx.amp", false);
@@ -371,8 +371,8 @@ void startRx(App& a) {
     a.rxError.clear();
     clampRx(a);
     rememberRecent(a, a.freqMHz);
-    // the width only places the radio's DC spike: with Auto, that of the 400 kHz profiles
-    const double width = a.profile >= 0 ? kavl::occupiedHz(kavl::videoProfile(a.profile).symRate) : 400e3;
+    // the width only places the radio's DC spike: with Auto, that of the 1080p60 profile (440 kHz)
+    const double width = a.profile >= 0 ? kavl::occupiedHz(kavl::videoProfile(a.profile).symRate) : 440e3;
     std::unique_ptr<IqSource> src;
     if (a.srcKind == 0) {
         if (a.iqPath.empty()) {

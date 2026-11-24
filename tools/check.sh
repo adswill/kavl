@@ -4,11 +4,11 @@
 #   2. the fast tests in parallel (everything but the slow threshold sweep),
 #   3. a short run of the app itself, hidden: the test pattern sent to its own receiver (loopback). It fails when the receiver does not lock,
 #      no picture comes, or the delay is above MAX_DELAY seconds.
-# Usage: tools/check.sh            options: SECS=10 PROFILE=0 MAX_DELAY=1.5 tools/check.sh;  SKIP_APP=1 for build + tests only
+# Usage: tools/check.sh            options: SECS=10 PROFILE=3 MAX_DELAY=1.5 tools/check.sh;  SKIP_APP=1 for build + tests only
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-SECS="${SECS:-10}"; PROFILE="${PROFILE:-0}"; MAX_DELAY="${MAX_DELAY:-1.5}"
+SECS="${SECS:-10}"; PROFILE="${PROFILE:-3}"; MAX_DELAY="${MAX_DELAY:-1.5}"
 t0=$(date +%s)
 echo "== build"
 nice -n 19 cmake --build build -j3 > build/check-build.log 2>&1 || { grep -E "error:" -A3 build/check-build.log | head -30; echo "BUILD FAILED"; exit 1; }

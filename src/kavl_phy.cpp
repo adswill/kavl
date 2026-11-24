@@ -119,19 +119,16 @@ const BitMaps& bitMaps(int nBits) {
 }  // namespace
 
 const VideoProfile& videoProfile(int i) {
+    // The 0 dB family (owner, 2026-11-24): every profile on QPSK 6/15 (about 1 dB measured), as narrow as its picture allows, never above 1 MHz;
+    // stereo Opus 32 kbit/s; a key frame every 2 s (4 s at 360p, where they would take too much of so few bits). The width sets the video
+    // budget (videoKbps): about 25, 60, 150, 250, 400 and 635 kbit/s.
     static const VideoProfile t[kNumVideoProfiles] = {
-        {"720p60, 160 kHz", 1280, 720, 60, 156900.0, 3},            {"720p60 robust, 230 kHz", 1280, 720, 60, 225500.0, 2},
-        {"1080p60, 260 kHz", 1920, 1080, 60, 254900.0, 3},          {"1080p60 robust, 400 kHz", 1920, 1080, 60, 392000.0, 2},
-        {"1440p60, 400 kHz", 2560, 1440, 60, 392000.0, 3},          {"1440p60 robust, 560 kHz", 2560, 1440, 60, 549000.0, 2},
-        {"4K60, 650 kHz", 3840, 2160, 60, 637300.0, 3},             {"4K60 robust, 950 kHz", 3840, 2160, 60, 931400.0, 2},
-        {"4K120, 870 kHz", 3840, 2160, 120, 852900.0, 3},           {"4K120 robust, 1.25 MHz", 3840, 2160, 120, 1225500.0, 2},
-        // narrow, NUC-64 10/15 (13.5 dB): speech-grade mono sound in 60 ms packets, a key frame every 4 s (a key frame each second would take a
-        // large share of so few bits). Frames last 1.43 s and 2.86 s on air, so the delay is a few seconds.
-        {"360p30, 24 kHz", 640, 360, 30, 24000.0 / 1.02, 2, 16, 1, 60, 6, 4},
-        {"360p15, 12 kHz", 640, 360, 15, 12000.0 / 1.02, 2, 12, 1, 60, 4, 4},
-        // weak signal, 1080p60 at the 1080p60 profile's video budget, never above 1 MHz (owner): QPSK 11/15 (5.0 dB measured), NUC-16 8/15 (7.5 dB)
-        {"1080p60 weak, 950 kHz", 1920, 1080, 60, 950000.0 / 1.02, 10},
-        {"1080p60 weak, 650 kHz", 1920, 1080, 60, 650000.0 / 1.02, 11},
+        {"360p15, 100 kHz", 640, 360, 15, 100000.0 / 1.02, 12, 32, 2, 20, 12, 4},
+        {"360p30, 150 kHz", 640, 360, 30, 150000.0 / 1.02, 12, 32, 2, 20, 12, 4},
+        {"720p60, 290 kHz", 1280, 720, 60, 290000.0 / 1.02, 12, 32, 2, 20, 18, 2},
+        {"1080p60, 440 kHz", 1920, 1080, 60, 440000.0 / 1.02, 12, 32, 2, 20, 18, 2},
+        {"1440p60, 660 kHz", 2560, 1440, 60, 660000.0 / 1.02, 12, 32, 2, 20, 18, 2},
+        {"4K60, 1 MHz", 3840, 2160, 60, 1000000.0 / 1.02, 12, 32, 2, 20, 18, 2},
     };
     return t[std::clamp(i, 0, kNumVideoProfiles - 1)];
 }

@@ -7,7 +7,7 @@
 // symbol, which SDR++ (File source) and kavl_decwav open.
 //   kavl_avtx --video v.ivf [--audio a.ogg] [--profile N] [--fec F] [--modcod N] [--symrate R] [--snr DB] [--freq HZ] [--out FILE]
 // --fec F: erasure protection across code words (kavl_fec.h: 1 = 30 + 2, 2 = 60 + 4, 3 = 28 + 4; 0 = none, the default).
-// --profile N sets the symbol rate and the modcod of video profile N (kavl_phy.h, 0 .. 9; 4 = 1440p60 at 400 kHz); --symrate / --modcod override.
+// --profile N sets the symbol rate and the modcod of video profile N (kavl_phy.h, 0 .. 5; 3 = 1080p60 at 440 kHz); --symrate / --modcod override.
 // Without --video it lists the profiles with their AV1 budgets.
 #include "kavl/kavl_av.h"
 #include "kavl/kavl_fec.h"

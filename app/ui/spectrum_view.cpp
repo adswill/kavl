@@ -395,7 +395,7 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
             const Found& f = found_[i];
             const double mid = (f.u0 + f.u1) / 2, widthHz = (f.u1 - f.u0) * in.fs, hz = hzOfU(mid);
             if (mid < lo_ || mid > hi_) continue;
-            // the profiles this width fits (within 25 %), by their short names: one symbol rate can carry two (1440p60 and 1080p60 robust)
+            // the profiles this width fits (within 25 %), by their short names
             std::string profs;
             double best = 1e9;
             for (int p = 0; p < kavl::kNumVideoProfiles; p++)

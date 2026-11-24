@@ -49,20 +49,16 @@ static void testDemapExact() {
     }
 }
 
-// The video budgets: the wide profiles keep theirs (112 kbit/s of sound and 18 of overhead), the narrow ones leave room for a 360p picture.
+// The 0 dB family: every profile on QPSK 6/15, never above 1 MHz, with the video budget it was sized for.
 static void testBudgets() {
-    CHECK(videoKbps(videoProfile(4)) == 1700);   // 1440p60, 400 kHz
-    CHECK(videoKbps(videoProfile(0)) == static_cast<int>(netBitRate(*modcod(3), 156900.0) / 1.10 / 1000.0) - 130);
-    const int k24 = videoKbps(videoProfile(10)), k12 = videoKbps(videoProfile(11));
-    std::printf("narrow budgets: %s %d kbit/s, %s %d kbit/s\n", videoProfile(10).name, k24, videoProfile(11).name, k12);
-    CHECK(k24 >= 50 && k24 <= 70);
-    CHECK(k12 >= 18 && k12 <= 30);
-    CHECK(occupiedHz(videoProfile(10).symRate) <= 24000.5 && occupiedHz(videoProfile(11).symRate) <= 12000.5);
-    // the weak-signal 1080p60 profiles: never above 1 MHz, and at least the 1080p60 profile's video budget
-    for (int p : {12, 13}) {
-        std::printf("weak: %s %d kbit/s video, %.0f kHz\n", videoProfile(p).name, videoKbps(videoProfile(p)), occupiedHz(videoProfile(p).symRate) / 1e3);
-        CHECK(occupiedHz(videoProfile(p).symRate) <= 1e6);
-        CHECK(videoKbps(videoProfile(p)) >= videoKbps(videoProfile(2)) - 5);
+    const int want[kNumVideoProfiles] = {25, 60, 150, 250, 400, 635};
+    for (int p = 0; p < kNumVideoProfiles; p++) {
+        const auto& vp = videoProfile(p);
+        const int k = videoKbps(vp);
+        std::printf("profile %d %-18s %4d kbit/s video, %4.0f kHz, %s\n", p, vp.name, k, occupiedHz(vp.symRate) / 1e3, modcod(vp.modcod)->name);
+        CHECK(vp.modcod == 12);
+        CHECK(occupiedHz(vp.symRate) <= 1e6 + 0.5);
+        CHECK(std::abs(k - want[p]) <= want[p] / 10 + 2);
     }
 }
 
@@ -166,12 +162,12 @@ static void testRtlLink() {
                 r2.cfoHz);
     CHECK(r2.framesFound == 3);
     CHECK(r2.blocksOk == r2.blocks);
-    // the narrowest profile (360p15, 12 kHz, NUC-64 10/15) through the same receiver: 2.4 Msps is 200 times its symbol rate, 3 kHz off
-    auto c3 = rtlChannel(16.0, videoProfile(11).symRate);
+    // a 12 kHz signal (NUC-64 10/15) through the same receiver: 2.4 Msps is 200 times its symbol rate, 3 kHz off
+    auto c3 = rtlChannel(16.0, 12000.0 / 1.02);
     c3.cfoHz = 3000.0;
     c3.phaseNoiseDeg = 0.05 * std::sqrt(392000.0 / c3.symRate);   // the same oscillators: more phase wander per (longer) symbol
-    const auto r3 = runLink(videoProfile(11).modcod, 2, c3, 44);
-    std::printf("rtl %s at 16 dB, 3 kHz off: frames %d/%d code words %d/%d, MER %.1f dB, offset %.0f Hz\n", videoProfile(11).name, r3.framesFound, r3.framesSent,
+    const auto r3 = runLink(2, 2, c3, 44);
+    std::printf("rtl 12 kHz NUC-64 10/15 at 16 dB, 3 kHz off: frames %d/%d code words %d/%d, MER %.1f dB, offset %.0f Hz\n", r3.framesFound, r3.framesSent,
                 r3.blocksOk, r3.blocks, r3.merDb, r3.cfoHz);
     CHECK(r3.framesFound == 2);
     CHECK(r3.blocksOk == r3.blocks);
