@@ -225,14 +225,17 @@ public:
         if (th_.joinable()) th_.join();
         if (fd_ >= 0) close(fd_);
         fd_ = -1;
-        if (child_ > 0) {
-            kill(child_, SIGTERM);
-            for (int i = 0; i < 30 && waitpid(child_, nullptr, WNOHANG) == 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            if (waitpid(child_, nullptr, WNOHANG) == 0) {
-                kill(child_, SIGKILL);
-                waitpid(child_, nullptr, 0);
-            }
+        if (child_ > 0) {   // rtl_tcp can take a second or more to let go of the dongle: wait for it on a thread, not here (the UI calls stop)
+            const pid_t pid = child_;
             child_ = 0;
+            kill(pid, SIGTERM);
+            std::thread([pid] {
+                for (int i = 0; i < 30 && waitpid(pid, nullptr, WNOHANG) == 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                if (waitpid(pid, nullptr, WNOHANG) == 0) {
+                    kill(pid, SIGKILL);
+                    waitpid(pid, nullptr, 0);
+                }
+            }).detach();
         }
     }
     void setFrequency(double hz) override {

@@ -42,7 +42,8 @@ private:
     std::vector<float> disp_, peakDb_;
     unsigned tex_ = 0;
     static constexpr int kW = 1024, kH = 256;
-    std::vector<uint32_t> rows_ = std::vector<uint32_t>(static_cast<size_t>(kW) * kH, 0xFF000000u);
+    std::vector<uint32_t> rows_ = std::vector<uint32_t>(static_cast<size_t>(kW) * kH, 0xFF000000u);   // a ring of rows; head_ is the newest
+    int head_ = 0;
     // mouse
     bool dragging_ = false, bandDrag_ = false;
     float pressX_ = 0, bandShiftHz_ = 0;

@@ -48,6 +48,7 @@ void SpectrumView::clear() {
     rangeSet_ = false;
     disp_.clear();
     peakDb_.clear();
+    head_ = 0;
     std::fill(rows_.begin(), rows_.end(), 0xFF000000u);
     if (tex_) {
         glBindTexture(GL_TEXTURE_2D, tex_);
@@ -115,9 +116,12 @@ void SpectrumView::options() {
 
 void SpectrumView::addRow(const std::vector<float>& db) {
     const float lo = autoRange_ ? autoLo_ : minDb_, hi = autoRange_ ? autoHi_ : maxDb_;
-    std::memmove(rows_.data() + kW, rows_.data(), sizeof(uint32_t) * kW * (kH - 1));
+    // one new row into the ring (the newest at head_), and only that row goes up to the GPU: 4 KB, not the whole 1 MB texture
+    head_ = (head_ + kH - 1) % kH;
+    uint32_t* row = rows_.data() + static_cast<size_t>(head_) * kW;
     const size_t n = db.size();
-    for (int x = 0; x < kW; x++) rows_[static_cast<size_t>(x)] = colour((db[static_cast<size_t>(x) * n / kW] - lo) / (hi - lo));
+    for (int x = 0; x < kW; x++) row[x] = colour((db[static_cast<size_t>(x) * n / kW] - lo) / (hi - lo));
+    const bool fresh = !tex_;
     if (!tex_) {
         glGenTextures(1, &tex_);
         glBindTexture(GL_TEXTURE_2D, tex_);
@@ -129,7 +133,8 @@ void SpectrumView::addRow(const std::vector<float>& db) {
     }
     glBindTexture(GL_TEXTURE_2D, tex_);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, rows_.data());
+    if (fresh) glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kW, kH, GL_RGBA, GL_UNSIGNED_BYTE, rows_.data());
+    else glTexSubImage2D(GL_TEXTURE_2D, 0, 0, head_, kW, 1, GL_RGBA, GL_UNSIGNED_BYTE, row);
 }
 
 bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tuneHz) {
@@ -237,7 +242,12 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
     }
     // the waterfall (the part of the texture on show)
     if (waterfall && wfH > 1) {
-        if (tex_) dl->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(tex_)), ImVec2(plotX0, wfY0), ImVec2(s1.x, wfY0 + wfH), ImVec2(lo_, 0), ImVec2(hi_, 1));
+        if (tex_) {   // the ring from the newest row (head_) down to the end, then from the start up to head_
+            const ImTextureID id = static_cast<ImTextureID>(static_cast<intptr_t>(tex_));
+            const float split = wfY0 + wfH * static_cast<float>(kH - head_) / kH, v0 = static_cast<float>(head_) / kH;
+            dl->AddImage(id, ImVec2(plotX0, wfY0), ImVec2(s1.x, split), ImVec2(lo_, v0), ImVec2(hi_, 1.f));
+            if (head_ > 0) dl->AddImage(id, ImVec2(plotX0, split), ImVec2(s1.x, wfY0 + wfH), ImVec2(lo_, 0.f), ImVec2(hi_, v0));
+        }
         else dl->AddRectFilled(ImVec2(plotX0, wfY0), ImVec2(s1.x, wfY0 + wfH), ImGui::GetColorU32(pal::pictureBlack()));
         if (have && in.bandHalfHz > 0) {   // the band's edges on the waterfall too
             const double c = in.rxHz + (bandDrag_ ? bandShiftHz_ : 0.0);
