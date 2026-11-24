@@ -14,6 +14,11 @@
 namespace kavl {
 
 namespace {
+// Table 6.6: M1, M2, Q1, Q2 of the Type A codes, Ninner = 64800
+struct TypeA {
+    int rate, m1, m2, q1, q2;
+};
+const TypeA kTypeA64[] = {{2, 1800, 54360, 5, 151}, {3, 1800, 50040, 5, 139}, {4, 1800, 45720, 5, 127}, {5, 1440, 41760, 4, 116}, {7, 1080, 33480, 3, 93}};
 // Table 6.7: Q of the Type B codes, Ninner = 64800
 int qOf(int rate15) {
     switch (rate15) {
@@ -39,11 +44,13 @@ inline float boxMin1(float min1, float min2) {
 }  // namespace
 
 Ldpc::Ldpc(int rate15) {
-    q_ = qOf(rate15);
+    for (const auto& t : kTypeA64)
+        if (t.rate == rate15) typeA_ = true, m1_ = t.m1, m2_ = t.m2, q1_ = t.q1, q2_ = t.q2;
+    q_ = typeA_ ? 0 : qOf(rate15);
     const int* lens = nullptr;
     int nrows = 0;
     const int* tab = tables::ldpcRows64800(rate15, &lens, &nrows);
-    if (!tab || !q_) return;
+    if (!tab || (!typeA_ && !q_)) return;
     k_ = n_ / 15 * rate15;
     m_ = n_ - k_;
     int pos = 0;
@@ -52,13 +59,28 @@ Ldpc::Ldpc(int rate15) {
         pos += lens[r];
     }
     std::vector<std::vector<int>> chk(static_cast<size_t>(m_));
-    for (int b = 0; b < k_; b++) {
-        const int mm = b % 360;
-        for (int x : rows_[static_cast<size_t>(b / 360)]) chk[static_cast<size_t>((x + mm * q_) % m_)].push_back(b);
-    }
-    for (int c = 0; c < m_; c++) {
-        chk[static_cast<size_t>(c)].push_back(k_ + c);
-        if (c > 0) chk[static_cast<size_t>(c)].push_back(k_ + c - 1);
+    if (typeA_) {
+        // the information bits and the (interleaved) dual-diagonal parity bits through the table; the dual diagonal; the identity part
+        auto chain = [&](int i) { return k_ + 360 * (i % q1_) + i / q1_; };
+        auto ident = [&](int j) { return k_ + m1_ + 360 * (j % q2_) + j / q2_; };
+        for (int b = 0; b < k_ + m1_; b++) {
+            const int mm = b % 360;
+            for (int x : rows_[static_cast<size_t>(b / 360)]) chk[static_cast<size_t>(addr(x, mm))].push_back(b);
+        }
+        for (int c = 0; c < m1_; c++) {
+            chk[static_cast<size_t>(c)].push_back(chain(c));
+            if (c > 0) chk[static_cast<size_t>(c)].push_back(chain(c - 1));
+        }
+        for (int j = 0; j < m2_; j++) chk[static_cast<size_t>(m1_ + j)].push_back(ident(j));
+    } else {
+        for (int b = 0; b < k_; b++) {
+            const int mm = b % 360;
+            for (int x : rows_[static_cast<size_t>(b / 360)]) chk[static_cast<size_t>(addr(x, mm))].push_back(b);
+        }
+        for (int c = 0; c < m_; c++) {
+            chk[static_cast<size_t>(c)].push_back(k_ + c);
+            if (c > 0) chk[static_cast<size_t>(c)].push_back(k_ + c - 1);
+        }
     }
     chkStart_.assign(static_cast<size_t>(m_ + 1), 0);
     for (int c = 0; c < m_; c++) chkStart_[static_cast<size_t>(c + 1)] = chkStart_[static_cast<size_t>(c)] + static_cast<int>(chk[static_cast<size_t>(c)].size());
@@ -69,6 +91,22 @@ Ldpc::Ldpc(int rate15) {
 void Ldpc::encode(std::vector<uint8_t>& bits) const {
     bits.resize(static_cast<size_t>(n_), 0);
     std::vector<uint8_t> p(static_cast<size_t>(m_), 0);
+    if (typeA_) {   // A/322 6.1.3: accumulate, the dual-diagonal part, its bits interleaved into the word, then they feed the identity part
+        for (int i = 0; i < k_; i++) {
+            if (!bits[static_cast<size_t>(i)]) continue;
+            for (int x : rows_[static_cast<size_t>(i / 360)]) p[static_cast<size_t>(addr(x, i % 360))] ^= 1;
+        }
+        for (int i = 1; i < m1_; i++) p[static_cast<size_t>(i)] ^= p[static_cast<size_t>(i - 1)];
+        for (int s = 0; s < 360; s++)
+            for (int t = 0; t < q1_; t++) bits[static_cast<size_t>(k_ + 360 * t + s)] = p[static_cast<size_t>(q1_ * s + t)];
+        for (int u = 0; u < m1_; u++) {
+            if (!bits[static_cast<size_t>(k_ + u)]) continue;
+            for (int x : rows_[static_cast<size_t>(k_ / 360 + u / 360)]) p[static_cast<size_t>(addr(x, u % 360))] ^= 1;
+        }
+        for (int s = 0; s < 360; s++)
+            for (int t = 0; t < q2_; t++) bits[static_cast<size_t>(k_ + m1_ + 360 * t + s)] = p[static_cast<size_t>(m1_ + q2_ * s + t)];
+        return;
+    }
     for (int i = 0; i < k_; i++) {
         if (!bits[static_cast<size_t>(i)]) continue;
         const int mm = i % 360;

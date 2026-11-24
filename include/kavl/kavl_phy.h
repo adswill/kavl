@@ -44,7 +44,7 @@ constexpr int kHeaderSyms = kHeaderCodedBits * kHeaderRepeat;             // 560
 constexpr int kHeaderStart = kPreambleSyms;                              // symbol index of the first header symbol
 constexpr int kRegionStart = kPreambleSyms + kHeaderSyms;                // 1392
 constexpr int kFrameSyms = kRegionStart + kRegionSyms;                   // 34806
-constexpr int kNumModcods = 13;
+constexpr int kNumModcods = 16;   // the header's 4 modcod bits are all used
 constexpr int kMainModcod = 3;                                            // NUC-256 10/15: 2.01 Mbit/s at 392 ksym/s (11/15: 19.5 dB measured, 2.22 Mbit/s)
 // Profiles (the receiver must know the symbol rate; the header carries the modcod): 1440p60 = 392 ksym/s (400 kHz), 720p60 = 196 ksym/s (200 kHz).
 constexpr double kSymRate1440 = 392000.0, kSymRate720 = 196000.0;
