@@ -49,7 +49,8 @@ public:
         double inRate = 0.0;        // input sample rate; 0 = 4 x symRate (no resampling)
         bool iqCorrect = true;      // DC removal + IQ-imbalance correction
         float detect = 0.12f;       // differential preamble metric threshold (0..1; about 0.17 at -6 dB, 0.035 on noise)
-        int maxIter = 40;           // LDPC iterations
+        int maxIter = 80;           // LDPC iterations (the decoder stops when every check holds, so this only costs on code words at the edge:
+                                    // QPSK 9/15 at 2.0 dB, 38 of 48 with 40, 47 of 48 with 80)
         bool ddPass = true;
         bool pilotAdapt = true;     // weak frames (preamble SNR under 3 dB) average over +-16 / +-24 pilots
         int pilotSmooth = 8;        // pilot gains are averaged over +-pilotSmooth pilots (wider: less noise in the estimate, slower phase tracking)

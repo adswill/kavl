@@ -30,7 +30,7 @@ Modcod make(int id, const char* name, int bitsPerSym, int rate15) {
 const std::array<Modcod, kNumModcods>& table() {
     static const std::array<Modcod, kNumModcods> t = {
         make(0, "QPSK 8/15", 2, 8),           make(1, "NUC-16 9/15", 4, 9),        make(2, "NUC-64 10/15", 6, 10),
-        make(3, "NUC-256 10/15", 8, 10),    make(4, "NUC-256 11/15", 8, 11),    make(5, "NUC-256 12/15", 8, 12),
+        make(3, "NUC-256 10/15", 8, 10),    make(4, "QPSK 9/15", 2, 9),         make(5, "QPSK 10/15", 2, 10),   // most bits at 2-3 dB (2.95 kbit/s in 2.7 kHz at 2.2 dB)
         make(6, "NUC-256 13/15", 8, 13),    make(7, "NUC-1024 10/15", 10, 10),  make(8, "NUC-1024 11/15", 10, 11),
         make(9, "NUC-1024 12/15", 10, 12),
         // weak-signal modes within the same width (owner: never above 1 MHz, even for 1080p60): 1080p60 in about 950 kHz, 650 kHz
