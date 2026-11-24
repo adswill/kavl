@@ -239,6 +239,23 @@ public:
         freq_ = hz;
         command(0x01, static_cast<uint32_t>(freq_ + off_));
     }
+    void update(const RtlSettings& s) override {   // what changed goes to rtl_tcp at once
+        if (s.gainTenthsDb != s_.gainTenthsDb) {
+            if (s.gainTenthsDb < 0) {
+                command(0x03, 0);
+            } else {
+                if (s_.gainTenthsDb < 0) command(0x03, 1);
+                command(0x04, static_cast<uint32_t>(s.gainTenthsDb));
+            }
+        }
+        if (s.ppm != s_.ppm) command(0x05, static_cast<uint32_t>(s.ppm));
+        if (s.agc != s_.agc) command(0x08, s.agc ? 1 : 0);
+        if (s.biasTee != s_.biasTee) command(0x0e, s.biasTee ? 1 : 0);
+        s_.gainTenthsDb = s.gainTenthsDb;
+        s_.ppm = s.ppm;
+        s_.agc = s.agc;
+        s_.biasTee = s.biasTee;
+    }
 
 private:
     static constexpr double kRate = 2.4e6;
@@ -351,6 +368,17 @@ public:
     void setFrequency(double hz) override {
         freq_ = hz;
         if (dev_) hackrf_set_freq(dev_, static_cast<uint64_t>(freq_ + off_));
+    }
+    void update(const HackRfSettings& s) override {
+        if (!dev_) return;
+        if (s.lna != s_.lna) hackrf_set_lna_gain(dev_, static_cast<uint32_t>(std::clamp(s.lna / 8 * 8, 0, 40)));
+        if (s.vga != s_.vga) hackrf_set_vga_gain(dev_, static_cast<uint32_t>(std::clamp(s.vga / 2 * 2, 0, 62)));
+        if (s.amp != s_.amp) hackrf_set_amp_enable(dev_, s.amp ? 1 : 0);
+        if (s.antennaPower != s_.antennaPower) hackrf_set_antenna_enable(dev_, s.antennaPower ? 1 : 0);
+        s_.lna = s.lna;
+        s_.vga = s.vga;
+        s_.amp = s.amp;
+        s_.antennaPower = s.antennaPower;
     }
 
 private:

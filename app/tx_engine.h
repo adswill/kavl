@@ -47,6 +47,10 @@ public:
     std::string liveError() { return feed_.error(); }
     void stop();
     bool running() const { return running_; }
+    // while transmitting: the radio follows at once (HackRF TX VGA 0..47 dB, the +14 dB amplifier, the frequency; the loopback follows the frequency)
+    void setGain(int db);
+    void setAmp(bool on);
+    void setFrequency(double hz);
     struct Status {
         double seconds = 0, programmeSec = 0, sampleRate = 0, payloadMbps = 0;
         long frames = 0, underruns = 0, loops = 0;
@@ -77,6 +81,7 @@ private:
     std::mutex stMtx_;
     Status st_;
     void* dev_ = nullptr;
+    std::mutex devMtx_;   // dev_ between stop() and the live settings
     LiveFeed feed_;
     std::atomic<bool> live_{false};
 public:

@@ -18,6 +18,9 @@
 #include <thread>
 #include <vector>
 
+struct RtlSettings;
+struct HackRfSettings;
+
 class IqSource {
 public:
     using Sink = std::function<void(const kavl::cf*, size_t)>;
@@ -27,6 +30,9 @@ public:
     virtual double sampleRate() const = 0;
     virtual double offsetHz() const { return 0.0; }
     virtual void setFrequency(double /*hz*/) {}
+    // new gains while running (the radio of that kind only; the others ignore it)
+    virtual void update(const RtlSettings& /*s*/) {}
+    virtual void update(const HackRfSettings& /*s*/) {}
     virtual std::string error() const { return err_; }
     virtual std::string name() const = 0;
 protected:

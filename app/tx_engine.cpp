@@ -245,6 +245,7 @@ void TxEngine::stop() {
     if (lbTh_.joinable()) lbTh_.join();
     feed_.stop();
     live_ = false;
+    std::lock_guard<std::mutex> dl(devMtx_);
     if (dev_) {
         hackrf_stop_tx(static_cast<hackrf_device*>(dev_));
         hackrf_close(static_cast<hackrf_device*>(dev_));
@@ -253,6 +254,22 @@ void TxEngine::stop() {
     }
     running_ = false;
     quit_ = false;
+}
+
+void TxEngine::setGain(int db) {
+    std::lock_guard<std::mutex> dl(devMtx_);
+    if (dev_) hackrf_set_txvga_gain(static_cast<hackrf_device*>(dev_), static_cast<uint32_t>(std::clamp(db, 0, 47)));
+}
+
+void TxEngine::setAmp(bool on) {
+    std::lock_guard<std::mutex> dl(devMtx_);
+    if (dev_) hackrf_set_amp_enable(static_cast<hackrf_device*>(dev_), on ? 1 : 0);
+}
+
+void TxEngine::setFrequency(double hz) {
+    freqHz_ = hz;
+    std::lock_guard<std::mutex> dl(devMtx_);
+    if (dev_) hackrf_set_freq(static_cast<hackrf_device*>(dev_), static_cast<uint64_t>(hz));
 }
 
 TxEngine::Status TxEngine::status() {

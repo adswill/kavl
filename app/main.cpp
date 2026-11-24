@@ -7,7 +7,7 @@
 // Options: --file IQ.wav (start receiving it), --profile N, --tab rx|tx, --mute, --hidden, --shot OUT.png [--shot-after S] (a picture of the
 // window after S seconds, then quit). Checks without radios: --loopback (test pattern sent to this Mac's receiver), --fec N, --report (a status
 // line every second on stdout), --run-for S (quit after S seconds), --tx-gap A:B[:P] (the transmitter stops at A s and starts again at B s, with
-// profile P).
+// profile P), --retune T:MHz (the receive frequency changes at T s; more than one may be given).
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
@@ -451,14 +451,18 @@ void radioSettings(App& a) {
         if (run) ImGui::EndDisabled();
         return;
     }
-    if (run) ImGui::BeginDisabled();
+    // the frequency and the gains follow at once while receiving; the device choice waits for a stop
+    auto freqInput = [&]() {
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::InputDouble("##freq", &a.freqMHz, 0.1, 1.0, "%.4f MHz") && run && a.rx.source()) a.rx.source()->setFrequency(a.freqMHz * 1e6);
+        ImGui::SetItemTooltip("Receive frequency. Changes at once while receiving; or click the spectrum.");
+    };
     if (a.srcKind == 3) {
         ImGui::TextDisabled("From this Mac's transmitter (Send to: Loopback)");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputDouble("##freq", &a.freqMHz, 0.1, 1.0, "%.4f MHz");
-        if (run) ImGui::EndDisabled();
+        freqInput();
         return;
     }
+    if (run) ImGui::BeginDisabled();
     if (a.srcKind == 1) {
         ImGui::Checkbox("Remote rtl_tcp server", &a.rtl.remote);
         if (a.rtl.remote) {
@@ -486,36 +490,44 @@ void radioSettings(App& a) {
         if (ImGui::Button("R##refh")) refreshDevices(a);
         ImGui::SetItemTooltip("Look for radios again");
     }
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputDouble("##freq", &a.freqMHz, 0.1, 1.0, "%.4f MHz");
     if (run) ImGui::EndDisabled();
-    // gains can change while running only through a restart: keep them editable when stopped
-    if (run) ImGui::BeginDisabled();
+    freqInput();
+    bool changed = false;
     if (a.srcKind == 1) {
         bool autoGain = a.rtl.gainTenthsDb < 0;
-        if (ImGui::Checkbox("Automatic gain", &autoGain)) a.rtl.gainTenthsDb = autoGain ? -1 : 300;
+        if (ImGui::Checkbox("Automatic gain", &autoGain)) a.rtl.gainTenthsDb = autoGain ? -1 : 300, changed = true;
+        ImGui::SetItemTooltip("The tuner chooses its gain. Off: set it below (lower it when a transmitter close by overloads the dongle).");
         if (!autoGain) {
             float g = a.rtl.gainTenthsDb / 10.f;
             ImGui::SetNextItemWidth(-1);
-            if (ImGui::SliderFloat("##rtlg", &g, 0.f, 49.6f, "Gain %.1f dB")) a.rtl.gainTenthsDb = static_cast<int>(std::lround(g * 10));
+            if (ImGui::SliderFloat("##rtlg", &g, 0.f, 49.6f, "Gain %.1f dB")) a.rtl.gainTenthsDb = static_cast<int>(std::lround(g * 10)), changed = true;
+            ImGui::SetItemTooltip("Tuner gain, changes at once");
         }
         ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##ppm", &a.rtl.ppm, -100, 100, "Correction %d ppm");
-        ImGui::Checkbox("Bias tee", &a.rtl.biasTee);
+        changed |= ImGui::SliderInt("##ppm", &a.rtl.ppm, -100, 100, "Correction %d ppm");
+        ImGui::SetItemTooltip("Frequency correction of the dongle's crystal");
+        changed |= ImGui::Checkbox("Bias tee", &a.rtl.biasTee);
+        ImGui::SetItemTooltip("Power on the antenna socket (for an active antenna or an LNA)");
         ImGui::SameLine();
-        ImGui::Checkbox("RTL AGC", &a.rtl.agc);
+        changed |= ImGui::Checkbox("RTL AGC", &a.rtl.agc);
+        ImGui::SetItemTooltip("The RTL2832U's own digital gain control");
+        if (changed && run && a.rx.source()) a.rx.source()->update(a.rtl);
     } else {
         ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##lna", &a.hrf.lna, 0, 40, "LNA %d dB");
+        changed |= ImGui::SliderInt("##lna", &a.hrf.lna, 0, 40, "LNA %d dB");
+        ImGui::SetItemTooltip("RF gain, 8 dB steps");
         a.hrf.lna = a.hrf.lna / 8 * 8;
         ImGui::SetNextItemWidth(-1);
-        ImGui::SliderInt("##vga", &a.hrf.vga, 0, 62, "VGA %d dB");
+        changed |= ImGui::SliderInt("##vga", &a.hrf.vga, 0, 62, "VGA %d dB");
+        ImGui::SetItemTooltip("Baseband gain, 2 dB steps");
         a.hrf.vga = a.hrf.vga / 2 * 2;
-        ImGui::Checkbox("Amplifier +14 dB", &a.hrf.amp);
+        changed |= ImGui::Checkbox("Amplifier +14 dB", &a.hrf.amp);
+        ImGui::SetItemTooltip("The HackRF's RF amplifier");
         ImGui::SameLine();
-        ImGui::Checkbox("Antenna power", &a.hrf.antennaPower);
+        changed |= ImGui::Checkbox("Antenna power", &a.hrf.antennaPower);
+        ImGui::SetItemTooltip("Bias on the antenna port (for an active antenna)");
+        if (changed && run && a.rx.source()) a.rx.source()->update(a.hrf);
     }
-    if (run) ImGui::EndDisabled();
 }
 
 void receivePanel(App& a, float leftW, float contentH) {
@@ -703,36 +715,47 @@ void transmitPage(App& a, float h) {
     }
     ImGui::Spacing();
     heading(a, "3. Send");
-    if (a.tx.running()) ImGui::BeginDisabled();
+    const bool txRun = a.tx.running();
+    if (txRun) ImGui::BeginDisabled();
     ImGui::RadioButton("HackRF", &a.txDest, 0);
     ImGui::SameLine();
     ImGui::RadioButton("IQ file (.wav)", &a.txDest, 1);
     ImGui::SameLine();
     ImGui::RadioButton("Loopback", &a.txDest, 2);
     ImGui::SetItemTooltip("To this Mac's receiver, no radio (Receive source: Loopback). For trying things out.");
-    if (a.txDest == 2) {
+    // the frequency, the gain and the amplifier follow at once while transmitting
+    auto txFreq = [&]() {
         ImGui::SetNextItemWidth(170);
-        ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz");
+        if (txRun) ImGui::EndDisabled();
+        if (ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz") && txRun) a.tx.setFrequency(a.txFreqMHz * 1e6);
+        ImGui::SetItemTooltip("Transmit frequency; changes at once while transmitting");
+        if (txRun) ImGui::BeginDisabled();
+    };
+    if (a.txDest == 2) {
+        txFreq();
     } else if (a.txDest == 0) {
         if (a.hrfDevs.size() > 1) {
             ImGui::SetNextItemWidth(260);
             ImGui::Combo("##txdev", &a.txHrfDev, [](void* d, int i) { return (*static_cast<std::vector<RadioDevice>*>(d))[static_cast<size_t>(i)].label.c_str(); },
                          &a.hrfDevs, static_cast<int>(a.hrfDevs.size()));
         }
-        ImGui::SetNextItemWidth(170);
-        ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz");
+        txFreq();
+        if (txRun) ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::SetNextItemWidth(160);
-        ImGui::SliderInt("##txg", &a.txGain, 0, 47, "TX gain %d dB");
+        if (ImGui::SliderInt("##txg", &a.txGain, 0, 47, "TX gain %d dB") && txRun) a.tx.setGain(a.txGain);
+        ImGui::SetItemTooltip("HackRF transmit gain (VGA); changes at once");
         ImGui::SameLine();
-        ImGui::Checkbox("RF amplifier (+14 dB)", &a.txAmp);
+        if (ImGui::Checkbox("RF amplifier (+14 dB)", &a.txAmp) && txRun) a.tx.setAmp(a.txAmp);
+        ImGui::SetItemTooltip("The HackRF's RF amplifier; switch it off when the receiver is close by");
+        if (txRun) ImGui::BeginDisabled();
         ImGui::TextColored(pal::warnAmber(), "Transmit only where your licence and the band plan allow it (%.0f kHz wide signal).", kavl::occupiedHz(vp.symRate) / 1e3);
     } else {
         if (ImGui::Button("Save as...")) a.chooser.open(3, "Save the KAVL IQ file", true, "kavl_programme.wav");
         ImGui::SameLine();
         ImGui::TextUnformatted(a.txFilePath.empty() ? "(no file chosen)" : a.txFilePath.c_str());
     }
-    if (a.tx.running()) ImGui::EndDisabled();
+    if (txRun) ImGui::EndDisabled();
     const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec;
     const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
     const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty());
@@ -952,7 +975,8 @@ int main(int argc, char** argv) {
     bool hidden = false, mute = false, loopback = false, report = false;
     int profile = -1, tab = -1, fecArg = -1;
     double runFor = 0, gapStop = 0, gapStart = 0;
-    int gapProfile = -1;   // --tx-gap A:B[:P]: the loopback transmitter stops at A s and starts again at B s (with profile P)
+    int gapProfile = -1;
+    std::vector<std::pair<double, double>> retunes;   // --retune T:MHz: the receive frequency at T s   // --tx-gap A:B[:P]: the loopback transmitter stops at A s and starts again at B s (with profile P)
     for (int i = 1; i < argc; i++) {
         const std::string k = argv[i];
         auto val = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -968,6 +992,10 @@ int main(int argc, char** argv) {
         else if (k == "--report") report = true;
         else if (k == "--run-for") runFor = std::atof(val().c_str());
         else if (k == "--tx-gap") std::sscanf(val().c_str(), "%lf:%lf:%d", &gapStop, &gapStart, &gapProfile);
+        else if (k == "--retune") {   // T:MHz, may be given more than once
+            double t = 0, f = 0;
+            if (std::sscanf(val().c_str(), "%lf:%lf", &t, &f) == 2) retunes.emplace_back(t, f);
+        }
     }
     if (!glfwInit()) return 1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -1052,6 +1080,12 @@ int main(int argc, char** argv) {
             printReport(app, glfwGetTime() - t0);
         }
         if (runFor > 0 && glfwGetTime() - t0 > runFor) break;
+        for (auto& rt : retunes)
+            if (rt.first > 0 && glfwGetTime() - t0 > rt.first) {
+                app.freqMHz = rt.second;
+                if (app.rx.source()) app.rx.source()->setFrequency(app.freqMHz * 1e6);
+                rt.first = 0;
+            }
         if (gapStop > 0 && app.tx.running() && glfwGetTime() - t0 > gapStop && glfwGetTime() - t0 < gapStart) app.tx.stop();
         if (gapStart > 0 && !app.tx.running() && glfwGetTime() - t0 > gapStart) {
             if (gapProfile >= 0) app.txProfile = gapProfile;
