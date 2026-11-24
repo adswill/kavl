@@ -89,6 +89,30 @@ static void testHeader() {
     CHECK(g.modcod == 9 && g.fec == 5 && g.layer == 1 && g.seq == 0xBEEF && g.linkQ == 77);
     bits[20] ^= 1;
     CHECK(!parseHeader(bits.data(), g));
+    // the station ID: two characters a frame, through real headers, across the wrap of seq (65533 .. 65540 = slots 5 6 7 0 1 2 3 4)
+    StationIdReader rd;
+    for (int s = 65533; s < 65533 + 8; s++) {
+        Header f;
+        f.seq = s & 0xFFFF;
+        f.id = stationIdSlice("ea8/ly2xyz-9 abcdef", f.seq);   // the space dropped, lower case raised, 16 characters kept
+        auto fb = headerBits(f);
+        Header back;
+        CHECK(parseHeader(fb.data(), back) && back.id == f.id);
+        CHECK(rd.callsign().empty());
+        rd.push(back);
+    }
+    std::printf("station ID: %s\n", rd.callsign().c_str());
+    CHECK(rd.callsign() == "EA8/LY2XYZ-9ABCD");
+    // a short one is whole after pairs 0-2 (the end is in pair 2)
+    StationIdReader r2;
+    for (int s = 0; s < 3; s++) {
+        Header f;
+        f.seq = s;
+        f.id = stationIdSlice("M0ABC", s);
+        r2.push(f);
+    }
+    CHECK(r2.callsign() == "M0ABC");
+    CHECK(stationIdSlice("", 3) == 0);
     CHECK(headerSymbols(h).size() == static_cast<size_t>(kHeaderCodedBits));
 }
 

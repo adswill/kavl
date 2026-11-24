@@ -43,6 +43,7 @@ public:
         const kavl::Modcod* mc = nullptr;
         int lastOk = 0, lastBlocks = 0;
         long restarts = 0;         // transmissions that stopped and came back
+        std::string callsign;      // the station ID in the frame headers, once read whole ("" before, or when none is sent)
     };
     Stats stats();
     std::vector<kavl::cf> constellation();

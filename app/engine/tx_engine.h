@@ -53,6 +53,11 @@ public:
     void setGain(int db);
     void setAmp(bool on);
     void setFrequency(double hz);
+    // The callsign sent in the frame headers (station ID, kavl_phy.h); takes effect from the next frame, "" sends none.
+    void setStationId(const std::string& callsign) {
+        std::lock_guard<std::mutex> lk(idMtx_);
+        stationId_ = callsign;
+    }
     struct Status {
         double seconds = 0, programmeSec = 0, sampleRate = 0, payloadMbps = 0;
         long frames = 0, underruns = 0, loops = 0;
@@ -82,6 +87,8 @@ private:
     std::mutex ringMtx_;
     std::deque<int8_t> ring_;
     std::mutex stMtx_;
+    std::mutex idMtx_;
+    std::string stationId_;
     Status st_;
     void* dev_ = nullptr;
     std::mutex devMtx_;   // dev_ between stop() and the live settings

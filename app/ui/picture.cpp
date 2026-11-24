@@ -37,9 +37,7 @@ void pictureEmptyState(App& a, ImVec2 p0, ImVec2 size) {
     const auto& st = a.now.rx;
     char buf[160];
     if (a.rx.running()) {
-        // a frame lately, not ever (within 1.5 s, or 2.5 frame times on the narrow profiles)
-        const double recent = st.profile >= 0 ? std::max(1.5, 2.5 * kavl::frameSeconds(kavl::videoProfile(st.profile).symRate)) : 1.5;
-        const bool found = st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < recent;
+        const bool found = lockedNow(st, 1.5);   // a frame lately, not ever
         float y = p0.y + size.y * 0.5f - lineH(a.big) - 4;
         if (!found) {
             text(a.big, strong, y, "Looking for a KAVL signal");

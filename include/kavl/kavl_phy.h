@@ -16,6 +16,7 @@
 // receiver accepts any input rate (it resamples to 4 samples per symbol).
 #pragma once
 #include "kavl/kavl_common.h"
+#include <string>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -95,10 +96,27 @@ struct Header {
     int layer = 0;      // 0 = single layer (2 bits; reserved for the layered mode)
     int seq = 0;        // frame sequence number, 16 bits, wraps
     int linkQ = 0;      // reported Es/N0 in 0.25 dB steps (8 bits), 0 = unknown
+    int id = 0;         // station ID slice, 13 bits (0 = none): bit 12 set, then two 6-bit characters of the callsign (stationIdSlice)
 };
-// 64 information bits (one per byte), MSB first: version 2 (=0), modcod 4, fec 3, layer 2, seq 16, linkQ 8, reserved 13 (=0), CRC-16 over the first 48.
+// 64 information bits (one per byte), MSB first: version 2 (=0), modcod 4, fec 3, layer 2, seq 16, linkQ 8, id 13, CRC-16 over the first 48.
+// (The id bits were reserved as 0 before, so older transmitters simply send no ID.)
 std::vector<uint8_t> headerBits(const Header& h);
 bool parseHeader(const uint8_t* bits64, Header& h);   // false on a CRC or version failure
+// Station ID in the headers: the callsign (up to kStationIdChars of A-Z, 0-9, / and -; lower case is raised; other characters dropped) goes
+// two characters per frame, the pair chosen by seq % 8 (65536 frames are a whole number of rounds, so the wrap keeps the order). A reader has
+// it once it holds the pairs from the first up to the one with the end: 3 frames for "M0ABC" once pair 0 came. No payload is used, and it
+// decodes whenever the headers do.
+constexpr int kStationIdChars = 16;
+int stationIdSlice(const std::string& callsign, int seq);   // the header's id for this frame; 0 for an empty callsign
+class StationIdReader {
+public:
+    void push(const Header& h);              // every received header, in order
+    std::string callsign() const;            // once the pairs up to its end have come (and since then), else ""
+    void reset();
+private:
+    int slice_[8] = {};
+    int have_ = 0;                           // bit per slice seen
+};
 std::vector<cf> headerSymbols(const Header& h);       // 140 symbols: BPSK x j^i (a quarter turn per symbol, so the header looks like any other signal to the
                                                       // receiver's blind IQ-imbalance estimate)
 

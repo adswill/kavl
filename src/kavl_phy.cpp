@@ -218,7 +218,7 @@ std::vector<uint8_t> headerBits(const Header& h) {
     put(static_cast<uint32_t>(h.layer) & 3u, 2);
     put(static_cast<uint32_t>(h.seq) & 0xFFFFu, 16);
     put(static_cast<uint32_t>(h.linkQ) & 0xFFu, 8);
-    put(0, 13);
+    put(static_cast<uint32_t>(h.id) & 0x1FFFu, 13);
     uint8_t bytes[6] = {};
     for (int i = 0; i < 48; i++) bytes[i / 8] = static_cast<uint8_t>(bytes[i / 8] | (b[static_cast<size_t>(i)] << (7 - i % 8)));
     put(crc16(bytes, 6), 16);
@@ -242,7 +242,59 @@ bool parseHeader(const uint8_t* bits, Header& h) {
     h.layer = get(9, 2);
     h.seq = get(11, 16);
     h.linkQ = get(27, 8);
+    h.id = get(35, 13);
     return true;
+}
+
+namespace {
+// 6-bit characters of the station ID: 0 = end, 1-26 A-Z, 27-36 0-9, 37 '/', 38 '-'
+int idCode(char c) {
+    if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    if (c >= 'A' && c <= 'Z') return 1 + (c - 'A');
+    if (c >= '0' && c <= '9') return 27 + (c - '0');
+    if (c == '/') return 37;
+    if (c == '-') return 38;
+    return -1;
+}
+char idChar(int v) {
+    if (v >= 1 && v <= 26) return static_cast<char>('A' + v - 1);
+    if (v >= 27 && v <= 36) return static_cast<char>('0' + v - 27);
+    return v == 37 ? '/' : v == 38 ? '-' : '\0';
+}
+}  // namespace
+
+int stationIdSlice(const std::string& callsign, int seq) {
+    std::string s;
+    for (char c : callsign)
+        if (idCode(c) > 0 && static_cast<int>(s.size()) < kStationIdChars) s += c;
+    if (s.empty()) return 0;
+    const int k = seq & 7;
+    auto code = [&](size_t i) { return i < s.size() ? idCode(s[i]) : 0; };
+    return (1 << 12) | (code(2 * static_cast<size_t>(k)) << 6) | code(2 * static_cast<size_t>(k) + 1);
+}
+
+void StationIdReader::push(const Header& h) {
+    if (!(h.id & (1 << 12))) return;
+    const int k = h.seq & 7;
+    slice_[k] = h.id & 0xFFF;
+    have_ |= 1 << k;
+}
+
+std::string StationIdReader::callsign() const {
+    std::string s;
+    for (int k = 0; k < 8; k++) {
+        if (!(have_ & (1 << k))) return "";   // a pair before the end is missing
+        for (int v : {slice_[k] >> 6, slice_[k] & 63}) {
+            const char c = idChar(v);
+            if (!c) return s;
+            s += c;
+        }
+    }
+    return s;
+}
+
+void StationIdReader::reset() {
+    have_ = 0;
 }
 
 std::vector<cf> headerSymbols(const Header& h) {

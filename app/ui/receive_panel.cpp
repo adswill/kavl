@@ -191,7 +191,7 @@ void receivePanel(App& a, float w, float h) {
     const bool sigOpen = ImGui::CollapsingHeader("Signal", ImGuiTreeNodeFlags_DefaultOpen);
     ImGui::PopFont();
     if (sigOpen) {
-        const bool locked = run && st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < 0.5;
+        const bool locked = run && lockedNow(st);
         const bool clean = locked && st.lastOk == st.lastBlocks;
         if (!run) {
             lamp(pal::grey());
@@ -223,6 +223,8 @@ void receivePanel(App& a, float w, float h) {
         // the Dash rule: only what is being measured shows a number
         const char* dash = "\xE2\x80\x93";
         const bool had = run && st.frames > 0;
+        valueRow(a, "Station", "%s", locked && !st.callsign.empty() ? st.callsign.c_str() : dash);
+        ImGui::SetItemTooltip("The callsign the transmitter sends in its frame headers (read after a few frames)");
         valueRow(a, "Mode", "%s", locked && st.mc ? st.mc->name : dash);
         if (locked) {
             valueRow(a, "Es/N0", "%.1f dB", st.esn0);

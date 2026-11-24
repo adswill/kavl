@@ -21,13 +21,14 @@
 void callsignEditor(App& a, bool locked) {
     heading(a, "Callsign");
     if (locked) ImGui::BeginDisabled();
-    ImGui::Checkbox("On the picture", &a.cs.on);
-    ImGui::SetItemTooltip("Your callsign burned into what you send: every receiver and every recording shows it (station identification)");
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%s", a.cs.text.c_str());
-    ImGui::SameLine();
     ImGui::SetNextItemWidth(-1);
     if (ImGui::InputTextWithHint("##cstext", "Your callsign", buf, sizeof(buf))) a.cs.text = buf;
+    ImGui::SetItemTooltip("Sent in every frame header (station identification): receivers show it beside the lock, no space in the picture used. "
+                          "Up to 16 of A-Z, 0-9, / and -");
+    ImGui::Checkbox("Also on the picture", &a.cs.on);
+    ImGui::SetItemTooltip("Your callsign burned into the picture too, placed and styled below");
     if (locked) ImGui::EndDisabled();
     if (!a.cs.on) return;
     const auto& vp = kavl::videoProfile(a.txProfile);

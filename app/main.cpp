@@ -29,8 +29,8 @@ void printReport(App& a, double t) {
     const auto st = a.rx.stats();
     const auto ps = a.player.status();
     const auto ts = a.tx.status();
-    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f snd=%ld restarts=%ld dropped=%.1f | tx frames=%ld underruns=%ld\n", t, st.frames,
-                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ps.audioPackets, st.restarts, st.droppedSec, ts.frames, ts.underruns);
+    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f snd=%ld restarts=%ld dropped=%.1f id=%s | tx frames=%ld underruns=%ld\n", t, st.frames,
+                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ps.audioPackets, st.restarts, st.droppedSec, st.callsign.empty() ? "-" : st.callsign.c_str(), ts.frames, ts.underruns);
     std::fflush(stdout);
 }
 
@@ -200,9 +200,7 @@ int main(int argc, char** argv) {
             const auto st = app.rx.stats();
             const auto ps = app.player.status();
             const double t = glfwGetTime() - t0;
-            // a frame in the last 0.5 s (1.5 frame times on the narrow profiles, whose frames last 1.4-2.9 s)
-            const double win = st.profile >= 0 ? std::max(0.5, 1.5 * kavl::frameSeconds(kavl::videoProfile(st.profile).symRate)) : 0.5;
-            const bool lk = app.rx.running() && st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < win;
+            const bool lk = app.rx.running() && lockedNow(st);
             if (lk != locked) std::printf("EVENT t=%.2f %s\n", t, lk ? "locked" : "lock lost"), locked = lk;
             if (ps.shown != lastShown) lastShown = ps.shown, lastMove = t;
             const bool mv = t - lastMove < 0.4;

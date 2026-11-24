@@ -156,6 +156,11 @@ enum class Action { Primary, OnAir };                 // the start actions (Sign
 
 // ---- app.cpp ----
 double thresholdDb(const kavl::Modcod* m);   // the Es/N0 a modcod needs
+// A frame came within the last base seconds (1.5 frame times on the narrow profiles, whose frames last 1.4-2.9 s): locked
+inline bool lockedNow(const RxEngine::Stats& st, double base = 0.5) {
+    const double win = st.profile >= 0 ? std::max(base, 1.5 * kavl::frameSeconds(kavl::videoProfile(st.profile).symRate)) : base;
+    return st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < win;
+}
 float px(float v);                           // a length next to text, grown with View > Text size
 std::string resourceDir();                   // the fonts: inside KAVL.app, else the source tree
 void loadSettings(App& a);

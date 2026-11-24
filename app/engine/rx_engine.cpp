@@ -295,6 +295,13 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
     o.inRate = fs;
     kavl::Receiver rx(o);
     auto demux = std::make_unique<kavl::av::Demuxer>();
+    kavl::StationIdReader ids;
+    auto newStation = [&] {   // another transmission (or frequency): its ID is read afresh
+        ids.reset();
+        std::lock_guard<std::mutex> sl(sMtx_);
+        st_.callsign.clear();
+    };
+    newStation();
     // the radios put the signal at -offset: shift it back to the middle; on a narrow profile also by how far the spectrum shows it off, measured
     // again each second while no frame comes (the receiver alone finds offsets of up to 0.4 symbol rates: 4.7 kHz at 12 kHz wide)
     kavl::cf step(1, 0), ph(1, 0);
@@ -331,6 +338,7 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
                 player_.restart();
                 bufFec = -1;
                 haveFrame = false;
+                newStation();
                 continue;
             }
             // nothing received lately: skip a backlog rather than search stale noise (and come back late when the signal returns)
@@ -380,6 +388,7 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
                 demux = std::make_unique<kavl::av::Demuxer>();
                 player_.restart();
                 bufFec = -1;
+                newStation();
                 std::lock_guard<std::mutex> sl(sMtx_);
                 st_.restarts++;
             }
@@ -399,6 +408,7 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
                 player_.setStartBufferMs(100.0 + 1.5 * frameMs + (bufFec > 0 ? fp.frames * frameMs : 0.0));
             }
             demux->pushFrame(f);
+            ids.push(f.hdr);
         }
         player_.push(demux->take());
         std::lock_guard<std::mutex> sl(sMtx_);
@@ -407,6 +417,7 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
         if (wall > 1.0) st_.speed = t / wall;
         st_.lost = lostBefore_ + demux->stats().lost;
         st_.rebuilt = rebuiltBefore_ + demux->stats().recovered;
+        if (!frames.empty()) st_.callsign = ids.callsign();
         for (const auto& f : frames) {
             int ok = 0;
             for (const auto& b : f.blocks) ok += b.ok ? 1 : 0;

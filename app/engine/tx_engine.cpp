@@ -329,6 +329,10 @@ void TxEngine::modulateLoop(Dest d) {
     std::deque<kavl::av::Packet> liveV, liveA;
     std::deque<int64_t> liveWall;   // when each live video unit left the encoder
     auto lastClock = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    auto stationIdFor = [&](int s) {
+        std::lock_guard<std::mutex> lk(idMtx_);
+        return kavl::stationIdSlice(stationId_, s);
+    };
     auto makeFrame = [&]() {
         if (live_) {   // everything that arrived goes out at once, in time order; padding when nothing is waiting
             std::vector<kavl::av::Packet> v, a;
@@ -365,6 +369,7 @@ void TxEngine::modulateLoop(Dest d) {
             h.modcod = mc.id;
             h.fec = fec_;
             h.seq = seq++ & 0xFFFF;
+            h.id = stationIdFor(h.seq);
             n++;
             return kavl::frameSymbols(mc, h, pay.data());
         }
@@ -396,6 +401,7 @@ void TxEngine::modulateLoop(Dest d) {
         h.modcod = mc.id;
         h.fec = fec_;
         h.seq = seq++ & 0xFFFF;
+        h.id = stationIdFor(h.seq);
         n++;
         return kavl::frameSymbols(mc, h, pay.data());
     };

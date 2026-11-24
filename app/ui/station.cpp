@@ -31,10 +31,11 @@ void statusBar(App& a) {
     };
     if (!a.rx.running()) part(pal::grey(), "RX stopped");
     else {
-        const bool locked = st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < 0.5;
+        const bool locked = lockedNow(st);
         const int prof = a.profile >= 0 ? a.profile : st.profile;
-        part(locked ? pal::okGreen() : pal::warnAmber(), "RX %.4f MHz  %s%s", a.freqMHz, locked ? (ps.playing ? "playing" : "locked") : "searching",
-             prof >= 0 ? (std::string("  ") + kavl::videoProfile(prof).name).c_str() : "");
+        part(locked ? pal::okGreen() : pal::warnAmber(), "RX %.4f MHz  %s%s%s", a.freqMHz, locked ? (ps.playing ? "playing" : "locked") : "searching",
+             prof >= 0 ? (std::string("  ") + kavl::videoProfile(prof).name).c_str() : "",
+             locked && !st.callsign.empty() ? (std::string("  from ") + st.callsign).c_str() : "");
     }
     if (!a.tx.running()) part(pal::grey(), "TX off");
     else if (a.txDest == 0) {   // on the air: a solid red pill, the status line's ON AIR light
@@ -106,6 +107,7 @@ void frame(App& a) {
     if (a.chooser.poll(2, picked)) a.videoPath = picked, a.txSource = 0;
     if (a.chooser.poll(3, picked)) a.txFilePath = picked;
     if (a.chooser.poll(4, picked)) a.cs.font = picked;
+    a.tx.setStationId(a.cs.text);   // the callsign goes in every frame header (station ID), whether or not it is on the picture
     takeSnapshot(a);   // one read of the engines' status for the whole frame
     uploadPicture(a);
     updateSpectrum(a);
