@@ -144,6 +144,7 @@ void RxEngine::worker(int profile, double fs, double offset) {
         const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - wall0).count();
         if (wall > 1.0) st_.speed = t / wall;
         st_.lost = demux.stats().lost;
+        st_.rebuilt = demux.stats().recovered;
         for (const auto& f : frames) {
             int ok = 0;
             for (const auto& b : f.blocks) ok += b.ok ? 1 : 0;
@@ -157,6 +158,7 @@ void RxEngine::worker(int profile, double fs, double offset) {
             st_.cfo = f.cfoHz;
             st_.ppm = f.clockPpm;
             st_.mc = f.mc;
+            st_.fec = f.hdr.fec;
             st_.lastFrameSec = t;
             const_ = f.dataSyms;
         }

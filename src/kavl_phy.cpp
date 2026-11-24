@@ -3,6 +3,7 @@
 
 // KAVL physical layer, transmit side (layout in kavl/include/kavl/kavl_phy.h).
 #include "kavl/kavl_phy.h"
+#include "kavl/kavl_fec.h"
 #include "kavl/kavl_ldpc.h"
 #include "kavl_tables.h"
 #include <algorithm>
@@ -125,9 +126,11 @@ const VideoProfile& videoProfile(int i) {
     return t[std::clamp(i, 0, kNumVideoProfiles - 1)];
 }
 
-int videoKbps(const VideoProfile& p) {
+int videoKbps(const VideoProfile& p, int fecIdx) {
     const Modcod* m = modcod(p.modcod);
-    return m ? static_cast<int>(netBitRate(*m, p.symRate) / 1.10 / 1000.0) - 130 : 0;
+    const fec::Profile f = fec::profile(fecIdx, m ? m->blocks : 1);
+    const double share = f.parity > 0 ? static_cast<double>(f.data) / f.n() : 1.0;
+    return m ? static_cast<int>(netBitRate(*m, p.symRate) * share / 1.10 / 1000.0) - 130 : 0;
 }
 
 const Modcod* modcod(int id) {

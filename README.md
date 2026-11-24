@@ -73,7 +73,8 @@ The picture plays after the first key frame and one second of buffer. The left p
 
 1. Drop a video file on the window or choose one.
 2. Choose the profile and press Encode.
-3. Choose HackRF (frequency, TX gain, amplifier) or IQ file, then start.
+3. Choose the protection: none, 1 frame in 16 or 2 frames in 32 (6.25 % of the bits), or 1 frame in 8 (12.5 %). Any lost frame of a group is rebuilt, from a burst of interference or a fade.
+4. Choose HackRF (frequency, TX gain, amplifier) or IQ file, then start.
 
 The programme repeats until you stop it. Transmit only where your licence and the band plan allow it.
 
@@ -98,11 +99,12 @@ An RTL-SDR on the Receive tab can receive the HackRF's transmission at the same 
 - Error correction: ATSC 3.0 LDPC codes, 64800 bits, with non-uniform constellations (NUC-64 and NUC-256).
 - The receiver finds frames by a differential preamble search that is blind to the frequency offset. It removes the offset before the matched filter, measures the clock drift from one preamble to the next and tracks the phase from the pilots.
 - Audio and video packets run across the code words. Each code word points to the first packet that starts in it, so a lost code word costs only the packets in it.
+- Optional protection across frames: Reed-Solomon over GF(256), groups of 8 to 32 frames with 1 or 2 parity frames. The frame header names the protection, so the receiver needs no setting. With 1 frame in 8, the 1440p60 profile still gives a perfect picture at 17.8 dB, where 2.5 % of the code words fail.
 
 ## Limits
 
 - Tested with recordings and with simulated receivers: noise, frequency offset, clock offset, phase noise, IQ imbalance, DC offset and 8-bit samples. Not yet tested over the air.
-- No error protection across code words: a lost code word loses its packets, and the picture repairs itself at the next key frame.
+- Without protection a lost code word loses its packets, and the picture repairs itself at the next key frame.
 - The 4K120 demo is made from a 60 fps master by motion interpolation.
 - macOS only.
 

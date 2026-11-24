@@ -5,6 +5,7 @@
 // that are sometimes padded (the transmitter pads when nothing more is due). Padding that leaves fewer bytes than a packet header at the end of a
 // code word must not swallow the next code word. Also: a lost code word costs only the packets that touch it.
 #include "kavl/kavl_av.h"
+#include "kavl/kavl_fec.h"
 #include <cstdio>
 
 using namespace kavl;
@@ -98,6 +99,101 @@ int main() {
         const auto out = dm.take();
         std::printf("one code word lost: %zu of 60 packets back\n", out.size());
         CHECK(out.size() >= 50 && out.size() < 60);
+    }
+    // erasure protection, raw: any loss of up to P cells comes back exactly
+    for (int idx = 1; idx < fec::kNumProfiles; idx++) {
+        const fec::Profile fp = fec::profile(idx, 4);
+        int bad = 0;
+        for (int trial = 0; trial < 60; trial++) {
+            std::vector<std::vector<uint8_t>> data(static_cast<size_t>(fp.data), std::vector<uint8_t>(97));
+            for (auto& d : data)
+                for (auto& b : d) b = static_cast<uint8_t>(r.next());
+            auto cells = data;
+            for (auto& p : fec::encode(fp, data)) cells.push_back(p);
+            const int lose = 1 + static_cast<int>(r.next() % static_cast<uint64_t>(fp.parity));
+            for (int k = 0; k < lose; k++) cells[static_cast<size_t>(r.next() % static_cast<uint64_t>(fp.n()))].clear();
+            if (!fec::recover(fp, cells, 97)) bad++;
+            for (int i = 0; i < fp.data; i++)
+                if (cells[static_cast<size_t>(i)] != data[static_cast<size_t>(i)]) bad++;
+        }
+        std::printf("erasure %s: %d bad recoveries\n", fec::profileName(idx), bad);
+        CHECK(bad == 0);
+    }
+    // erasure protection through the muxer and demuxer: up to P lost code words per group (and whole lost frames) cost nothing
+    for (int m : {0, 2, 3, kMainModcod}) {
+        for (int idx = 1; idx < fec::kNumProfiles; idx++) {
+            const Modcod& mc = *modcod(m);
+            const fec::Profile fp = fec::profile(idx, mc.blocks);
+            av::Muxer mux(mc, idx);
+            av::Demuxer dm;
+            long pushed = 0;
+            std::vector<std::vector<uint8_t>> frames;
+            for (int i = 0; i < 300; i++) {
+                av::Packet p;
+                p.type = (i & 1) ? av::kVideo : av::kAudio;
+                p.ptsMs = static_cast<uint32_t>(i);
+                p.data.resize(1 + r.next() % static_cast<uint64_t>(2 * mc.payloadBytes));
+                for (auto& b : p.data) b = static_cast<uint8_t>(r.next());
+                mux.push(p);
+                pushed++;
+                while (mux.frameReady()) frames.push_back(mux.takeFrame());
+            }
+            for (int i = 0; i < 2 * fp.frames; i++) frames.push_back(mux.takeFrame(true));   // carry the last group and its parity out
+            // lose up to P code words per group, in random places; sometimes a whole frame
+            const long total = static_cast<long>(frames.size()) * mc.blocks;
+            std::vector<char> lost(static_cast<size_t>(total), 0);
+            for (long g0 = 0; g0 + fp.n() <= total; g0 += fp.n()) {   // complete groups only (the last one may not have its parity yet)
+                if (r.next() & 1) {   // whole frames, as many as the group has parity frames
+                    const int k = 1 + static_cast<int>(r.next() % static_cast<uint64_t>(fp.parityFrames));
+                    for (int j = 0; j < k; j++) {
+                        const long f0 = g0 + static_cast<long>(r.next() % static_cast<uint64_t>(fp.frames)) * mc.blocks;
+                        for (int b = 0; b < mc.blocks; b++) lost[static_cast<size_t>(f0 + b)] = 1;
+                    }
+                } else {   // single code words
+                    const int k = static_cast<int>(r.next() % static_cast<uint64_t>(fp.parity + 1));
+                    for (int j = 0; j < k; j++) lost[static_cast<size_t>(g0 + static_cast<long>(r.next() % static_cast<uint64_t>(fp.n())))] = 1;
+                }
+            }
+            for (size_t fi = 0; fi < frames.size(); fi++) {
+                RxFrame f = toFrame(mc, frames[fi], static_cast<int>(fi & 0xFFFF));
+                f.hdr.fec = idx;
+                for (int b = 0; b < mc.blocks; b++)
+                    if (lost[fi * static_cast<size_t>(mc.blocks) + static_cast<size_t>(b)]) f.blocks[static_cast<size_t>(b)].ok = false;
+                dm.pushFrame(f);
+            }
+            dm.flush();
+            const long got = static_cast<long>(dm.take().size());
+            std::printf("%-15s erasure %-24s: pushed %ld, demuxed %ld, rebuilt %ld code words, lost %ld\n", mc.name, fec::profileName(idx), pushed, got,
+                        dm.stats().recovered, dm.stats().lost);
+            CHECK(got == pushed);
+            CHECK(dm.stats().lost == 0);
+        }
+    }
+    // more losses than parity in one group: only that group's packets go, the stream carries on
+    {
+        const Modcod& mc = *modcod(kMainModcod);
+        av::Muxer mux(mc, 1);
+        av::Demuxer dm;
+        std::vector<std::vector<uint8_t>> frames;
+        for (int i = 0; i < 400; i++) {
+            av::Packet p;
+            p.type = av::kVideo;
+            p.ptsMs = static_cast<uint32_t>(i);
+            p.data.assign(900, static_cast<uint8_t>(i));
+            mux.push(p);
+            while (mux.frameReady()) frames.push_back(mux.takeFrame());
+        }
+        for (int i = 0; i < 32; i++) frames.push_back(mux.takeFrame(true));
+        for (size_t fi = 0; fi < frames.size(); fi++) {
+            RxFrame f = toFrame(mc, frames[fi], static_cast<int>(fi), fi == 3 ? 0 : -1);
+            f.hdr.fec = 1;
+            if (fi == 3 || fi == 5) f.blocks[1].ok = f.blocks[2].ok = false;   // 2 frames hit in one group of 16 with 1 parity frame
+            dm.pushFrame(f);
+        }
+        dm.flush();
+        const size_t got = dm.take().size();
+        std::printf("2 frames hit in one 16-frame group: %zu of 400 packets back\n", got);
+        CHECK(got >= 360 && got < 400);
     }
     if (fails) {
         std::printf("test_kavl_av: %d failures\n", fails);

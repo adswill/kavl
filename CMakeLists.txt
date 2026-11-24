@@ -16,7 +16,7 @@ find_package(Threads REQUIRED)
 
 # ---- library ------------------------------------------------------------------------------------------------------------------------------------------
 add_library(kavlcore STATIC src/kavl_common.cpp src/kavl_tables.cpp src/kavl_ldpc.cpp src/kavl_resampler.cpp src/kavl_phy.cpp src/kavl_rx.cpp
-  src/kavl_av.cpp src/kavl_media.cpp)
+  src/kavl_av.cpp src/kavl_media.cpp src/kavl_fec.cpp)
 target_include_directories(kavlcore PUBLIC include PRIVATE src)
 target_link_libraries(kavlcore PUBLIC Threads::Threads)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

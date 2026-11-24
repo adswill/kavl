@@ -17,7 +17,7 @@
 #include <cstring>
 
 namespace {
-constexpr double kStartBufferMs = 1000.0;
+constexpr double kStartBufferMs = 2000.0;   // covers a protection group (the transmitter sends 3 s ahead)
 constexpr size_t kMaxQueued = 6000;
 constexpr size_t kRingMax = 48000 * 2;   // 1 s of stereo
 }  // namespace

@@ -28,7 +28,8 @@ public:
     const std::string& error() const { return err_; }
 
     struct Stats {
-        long frames = 0, codeWords = 0, codeWordsOk = 0, lost = 0;
+        long frames = 0, codeWords = 0, codeWordsOk = 0, lost = 0, rebuilt = 0;
+        int fec = 0;
         double esn0 = 0, mer = 0, cfo = 0, ppm = 0;
         double streamSec = 0, lastFrameSec = -1, droppedSec = 0, speed = 0;
         const kavl::Modcod* mc = nullptr;

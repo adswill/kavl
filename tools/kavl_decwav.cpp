@@ -187,9 +187,12 @@ int main(int argc, char** argv) {
     }
     const std::vector<kavl::cf> tail(static_cast<size_t>(rate / 10), kavl::cf(0, 0));
     report(rx.push(tail.data(), tail.size()));
+    demux.flush();
+    avOut();
     std::printf("%ld frames, %ld/%ld code words decoded\n", frames, cwOk, cw);
     const auto& ds = demux.stats();
-    std::printf("audio/video: %ld video units, %ld audio packets, %ld bad packets, %ld resyncs\n", vUnits, aPackets, ds.badPackets, ds.resyncs);
+    std::printf("audio/video: %ld video units, %ld audio packets, %ld bad packets, %ld resyncs, %ld code words rebuilt, %ld lost\n", vUnits, aPackets,
+                ds.badPackets, ds.resyncs, ds.recovered, ds.lost);
     if (!ivfPath.empty()) {
         std::vector<uint8_t> h = {'D', 'K', 'I', 'F', 0, 0, 32, 0, 'A', 'V', '0', '1'};
         h.push_back(0x00); h.push_back(0x0A); h.push_back(0xA0); h.push_back(0x05);   // 2560 x 1440

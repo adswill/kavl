@@ -56,23 +56,24 @@ std::string TxEngine::prepareMessage() {
     return prepMsg_;
 }
 
-void TxEngine::prepare(const std::string& videoPath, int profile) {
+void TxEngine::prepare(const std::string& videoPath, int profile, int fecIdx) {
     if (preparing_ || running_) return;
     if (prepTh_.joinable()) prepTh_.join();
     ready_ = false;
     progress_ = 0;
     preparing_ = true;
     profile_ = profile;
-    prepTh_ = std::thread([this, videoPath, profile] { encodeJob(videoPath, profile); });
+    fec_ = fecIdx;
+    prepTh_ = std::thread([this, videoPath, profile, fecIdx] { encodeJob(videoPath, profile, fecIdx); });
 }
 
-void TxEngine::encodeJob(std::string path, int profile) {
+void TxEngine::encodeJob(std::string path, int profile, int fecIdx) {
     auto say = [&](const std::string& m) {
         std::lock_guard<std::mutex> lk(msgMtx_);
         prepMsg_ = m;
     };
     const kavl::VideoProfile& vp = kavl::videoProfile(profile);
-    const int kbps = kavl::videoKbps(vp);
+    const int kbps = kavl::videoKbps(vp, fecIdx);
     const std::string dir = (std::filesystem::temp_directory_path() / "kavl").string();
     std::filesystem::create_directories(dir);
     const std::string mkv = dir + "/programme.mkv", ivf = dir + "/programme.ivf", ogg = dir + "/programme.ogg";
@@ -239,9 +240,9 @@ void TxEngine::modulateLoop(Dest d) {
         std::vector<uint8_t> hdr(44, 0);
         std::fwrite(hdr.data(), 1, hdr.size(), wav);   // written properly at the end
     }
-    const double frameMs = kavl::frameSeconds(vp.symRate) * 1000.0, leadMs = 1500.0;
+    const double frameMs = kavl::frameSeconds(vp.symRate) * 1000.0, leadMs = 3000.0;   // 3 s ahead: a protection group must arrive whole
     const int H = kavl::kRrcSpan / 2 + 2;   // symbols of overlap on each side for the pulse shaping
-    kavl::av::Muxer mux(mc);
+    kavl::av::Muxer mux(mc, fec_);
     kavl::Transmitter tx(mc.id);
     std::vector<kavl::cf> prev(static_cast<size_t>(H), kavl::cf(0, 0)), cur, next;
     size_t vi = 0, ai = 0;
@@ -278,6 +279,7 @@ void TxEngine::modulateLoop(Dest d) {
         const auto pay = mux.takeFrame(!mux.frameReady());
         kavl::Header h;
         h.modcod = mc.id;
+        h.fec = fec_;
         h.seq = seq++ & 0xFFFF;
         n++;
         return kavl::frameSymbols(mc, h, pay.data());

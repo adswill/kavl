@@ -55,7 +55,8 @@ struct VideoProfile {
 };
 constexpr int kNumVideoProfiles = 10;
 const VideoProfile& videoProfile(int i);   // 0 .. kNumVideoProfiles - 1 (clamped)
-int videoKbps(const VideoProfile& p);
+// fecIdx: erasure protection (kavl_fec.h) takes its parity share off the budget.
+int videoKbps(const VideoProfile& p, int fecIdx = 0);
 
 struct Modcod {
     int id;

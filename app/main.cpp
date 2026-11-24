@@ -20,6 +20,7 @@
 #include "theme.h"
 #include "tx_engine.h"
 #include "video_gl.h"
+#include "kavl/kavl_fec.h"
 
 #include <algorithm>
 #include <cmath>
@@ -135,7 +136,7 @@ struct App {
     char rtlHost[128] = "127.0.0.1";
     // transmit
     std::string videoPath, txFilePath;
-    int txProfile = 4, txDest = 0, txGain = 20, txHrfDev = 0;
+    int txProfile = 4, txDest = 0, txGain = 20, txHrfDev = 0, txFec = 0;
     double txFreqMHz = 433.0;
     bool txAmp = false;
     // view
@@ -177,6 +178,7 @@ void loadSettings(App& a) {
     a.txGain = static_cast<int>(c.num("tx.gain", 20));
     a.txAmp = c.flag("tx.amp", false);
     a.txDest = static_cast<int>(c.num("tx.dest", 0));
+    a.txFec = std::clamp(static_cast<int>(c.num("tx.fec", 0)), 0, kavl::fec::kNumProfiles - 1);
     a.showWaterfall = c.flag("view.waterfall", true);
 }
 
@@ -203,6 +205,7 @@ void saveSettings(App& a) {
     c.set("tx.gain", a.txGain);
     c.set("tx.amp", a.txAmp);
     c.set("tx.dest", a.txDest);
+    c.set("tx.fec", a.txFec);
     c.set("view.waterfall", a.showWaterfall);
     c.save();
 }
@@ -499,6 +502,7 @@ void receivePanel(App& a, float leftW, float contentH) {
     valueRow(a, "Clock", "%.1f ppm", st.ppm);
     valueRow(a, "Code words", "%ld/%ld", st.codeWordsOk, st.codeWords);
     valueRow(a, "Lost", "%ld", st.lost);
+    if (st.fec > 0) valueRow(a, "Protection", "%s, %ld rebuilt", st.fec == 1 ? "1 in 16" : st.fec == 2 ? "2 in 32" : "1 in 8", st.rebuilt);
     ImGui::Separator();
     heading(a, "Programme");
     valueRow(a, "Video", ps.srcW ? "%dx%d %.0f fps" : "-", ps.srcW, ps.srcH, ps.fps);
@@ -529,11 +533,16 @@ void transmitPage(App& a, float h) {
     ImGui::SetNextItemWidth(260);
     ImGui::Combo("##txprof", &a.txProfile, [](void*, int i) { return kavl::videoProfile(i).name; }, nullptr, kavl::kNumVideoProfiles);
     const auto& vp = kavl::videoProfile(a.txProfile);
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(230);
+    ImGui::Combo("Protection##txfec", &a.txFec, [](void*, int i) { return i == 0 ? "No extra protection" : kavl::fec::profileName(i); }, nullptr,
+                 kavl::fec::kNumProfiles);
+    ImGui::SetItemTooltip("Parity frames: any lost frame of a group is rebuilt (a burst of interference, a fade). Costs video bits.");
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::TextWrapped("%dx%d at %d fps: AV1 %d kbit/s + Opus 112 kbit/s, %s, %.0f kHz wide, needs about %.1f dB", vp.width, vp.height, vp.fps,
-                       kavl::videoKbps(vp), kavl::modcod(vp.modcod)->name, kavl::occupiedHz(vp.symRate) / 1e3, thresholdDb(kavl::modcod(vp.modcod)));
+                       kavl::videoKbps(vp, a.txFec), kavl::modcod(vp.modcod)->name, kavl::occupiedHz(vp.symRate) / 1e3, thresholdDb(kavl::modcod(vp.modcod)));
     ImGui::PopStyleColor();
-    if (ImGui::Button("Encode for this profile") && !a.videoPath.empty()) a.tx.prepare(a.videoPath, a.txProfile);
+    if (ImGui::Button("Encode for this profile") && !a.videoPath.empty()) a.tx.prepare(a.videoPath, a.txProfile, a.txFec);
     if (busy) ImGui::EndDisabled();
     if (a.tx.preparing() || a.tx.ready() || !a.tx.prepareMessage().empty()) {
         ImGui::ProgressBar(a.tx.progress(), ImVec2(-1, 0));
@@ -565,7 +574,7 @@ void transmitPage(App& a, float h) {
         ImGui::TextUnformatted(a.txFilePath.empty() ? "(no file chosen)" : a.txFilePath.c_str());
     }
     if (a.tx.running()) ImGui::EndDisabled();
-    const bool canStart = a.tx.ready() && a.tx.profile() == a.txProfile && (a.txDest == 0 || !a.txFilePath.empty());
+    const bool canStart = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec && (a.txDest == 0 || !a.txFilePath.empty());
     if (!a.tx.running()) {
         if (!canStart) ImGui::BeginDisabled();
         if (ImGui::Button(a.txDest == 0 ? "  Start transmitting  " : "  Write the IQ file  ")) {
@@ -579,7 +588,7 @@ void transmitPage(App& a, float h) {
             a.tx.start(d);
         }
         if (!canStart) ImGui::EndDisabled();
-        if (a.tx.ready() && a.tx.profile() != a.txProfile) ImGui::TextColored(pal::warnAmber(), "The profile changed: encode again.");
+        if (a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec)) ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
     } else {
         ImGui::PushStyleColor(ImGuiCol_Button, pal::badRed());
         if (ImGui::Button("  Stop  ")) a.tx.stop();

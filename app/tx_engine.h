@@ -22,7 +22,7 @@ class TxEngine {
 public:
     ~TxEngine();
     // encoding
-    void prepare(const std::string& videoPath, int profile);
+    void prepare(const std::string& videoPath, int profile, int fecIdx = 0);   // fecIdx: erasure protection (kavl_fec.h)
     bool preparing() const { return preparing_; }
     bool ready() const { return ready_; }
     float progress() const { return progress_; }
@@ -47,9 +47,10 @@ public:
     };
     Status status();
     int profile() const { return profile_; }
+    int fec() const { return fec_; }
 
 private:
-    void encodeJob(std::string path, int profile);
+    void encodeJob(std::string path, int profile, int fecIdx);
     void modulateLoop(Dest d);
 
     std::thread prepTh_, txTh_;
@@ -57,7 +58,7 @@ private:
     std::atomic<float> progress_{0};
     std::mutex msgMtx_;
     std::string prepMsg_;
-    int profile_ = 4;
+    int profile_ = 4, fec_ = 0;
     std::vector<kavl::av::Packet> vids_, auds_;
     std::vector<uint8_t> opusHead_;
     double programmeMs_ = 0;

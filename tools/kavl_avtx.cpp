@@ -5,10 +5,12 @@
 //   ffmpeg -i in.mkv -map 0:v -c copy -f ivf v.ivf && ffmpeg -i in.mkv -map 0:a -c copy -f ogg a.ogg),
 // interleaves the codec units by time, packs them into frames (kavl_av.h) and writes the transmitted signal as a 2-channel 16-bit .wav at 4 samples per
 // symbol, which SDR++ (File source) and kavl_decwav open.
-//   kavl_avtx --video v.ivf [--audio a.ogg] [--modcod N] [--symrate R] [--snr DB] [--freq HZ] [--out FILE]
+//   kavl_avtx --video v.ivf [--audio a.ogg] [--profile N] [--fec F] [--modcod N] [--symrate R] [--snr DB] [--freq HZ] [--out FILE]
+// --fec F: erasure protection across code words (kavl_fec.h: 1 = 30 + 2, 2 = 60 + 4, 3 = 28 + 4; 0 = none, the default).
 // --profile N sets the symbol rate and the modcod of video profile N (kavl_phy.h, 0 .. 9; 4 = 1440p60 at 400 kHz); --symrate / --modcod override.
 // Without --video it lists the profiles with their AV1 budgets.
 #include "kavl/kavl_av.h"
+#include "kavl/kavl_fec.h"
 #include "kavl/kavl_media.h"
 #include <cmath>
 #include <cstdio>
@@ -35,6 +37,7 @@ void put16(FILE* f, uint16_t v) {
 int main(int argc, char** argv) {
     std::string video, audio, out;
     int mc = kavl::kMainModcod;
+    int fecIdx = 0;
     double snr = 100.0, freq = 433000000.0, symRate = kavl::kDefaultSymRate;
     for (int i = 1; i + 1 < argc; i += 2) {
         const std::string k = argv[i];
@@ -44,6 +47,7 @@ int main(int argc, char** argv) {
         else if (k == "--modcod") mc = std::atoi(v);
         else if (k == "--snr") snr = std::atof(v);
         else if (k == "--symrate") symRate = std::atof(v);
+        else if (k == "--fec") fecIdx = std::clamp(std::atoi(v), 0, kavl::fec::kNumProfiles - 1);
         else if (k == "--profile") {
             const kavl::VideoProfile& vp = kavl::videoProfile(std::atoi(v));
             symRate = vp.symRate;
@@ -63,8 +67,9 @@ int main(int argc, char** argv) {
         std::printf("profiles (AV1 budget = payload with 10%% headroom, less sound and overhead):\n");
         for (int i = 0; i < kavl::kNumVideoProfiles; i++) {
             const auto& vp = kavl::videoProfile(i);
-            std::printf("  %d  %-26s %4dx%-4d %3d fps  %7.1f ksym/s  %-15s  payload %.3f Mbit/s  video budget %d kbit/s\n", i, vp.name, vp.width, vp.height, vp.fps,
-                        vp.symRate / 1e3, kavl::modcod(vp.modcod)->name, kavl::netBitRate(*kavl::modcod(vp.modcod), vp.symRate) / 1e6, kavl::videoKbps(vp));
+            std::printf("  %d  %-26s %4dx%-4d %3d fps  %7.1f ksym/s  %-15s  payload %.3f Mbit/s  video budget %d kbit/s (%d with --fec 1)\n", i, vp.name, vp.width,
+                        vp.height, vp.fps, vp.symRate / 1e3, kavl::modcod(vp.modcod)->name, kavl::netBitRate(*kavl::modcod(vp.modcod), vp.symRate) / 1e6, kavl::videoKbps(vp),
+                        kavl::videoKbps(vp, 1));
         }
         return 0;
     }
@@ -81,8 +86,8 @@ int main(int argc, char** argv) {
     // interleave by time; the audio config goes in front and about every second. Frames are paced to real time: frame n (on air at n x frame time)
     // carries the units due by then plus a lead, and padding when there is nothing more, so the signal lasts as long as the programme (a receiver
     // plays it at the right speed and a looping player sees the whole of it).
-    const double leadMs = 1500.0, frameMs = kavl::frameSeconds(symRate) * 1000.0;
-    kavl::av::Muxer mux(*m);
+    const double leadMs = 3000.0, frameMs = kavl::frameSeconds(symRate) * 1000.0;   // 3 s ahead: a protection group (up to 32 frames) must arrive whole
+    kavl::av::Muxer mux(*m, fecIdx);
     size_t vi = 0, ai = 0;
     uint32_t nextCfg = 0;
     long vBytes = 0, aBytes = 0;
@@ -111,7 +116,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < 4; i++) frames.push_back(std::vector<uint8_t>(static_cast<size_t>(kavl::framePayloadBytes(*m)), 0));
 
     kavl::Transmitter tx(mc);
-    auto iq = tx.modulate(frames, 0, 0, 0, 256, 256);
+    auto iq = tx.modulate(frames, fecIdx, 0, 0, 256, 256);
     if (snr < 99.0) {
         const double sd = std::sqrt(kavl::kSps / std::pow(10.0, snr / 10.0) / 2.0);
         kavl::XorShift64 nr{777};
