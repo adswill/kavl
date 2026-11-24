@@ -29,6 +29,10 @@ extern char** environ;
 
 namespace {
 
+// rtl_tcp processes still being let go of (RtlTcpSource::stop reaps them on a thread): a new start waits for them, or the new rtl_tcp finds
+// the dongle still taken
+std::atomic<int> gRtlExiting{0};
+
 // keep the DC spike out of the signal when the sample rate leaves room: tune half the width plus 100 kHz above the wanted frequency
 double dcOffset(double fs, double width) {
     const double off = width / 2.0 + 100e3;
@@ -160,6 +164,8 @@ public:
                 err_ = "rtl_tcp was not found. Install it with: brew install librtlsdr";
                 return false;
             }
+            // a stop just before: the old rtl_tcp may still hold the dongle (it is let go of on a thread, 2 s at most)
+            for (int i = 0; i < 40 && gRtlExiting > 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(50));
             port = 19000 + (getpid() % 1000);
             const std::string sp = std::to_string(port), sd = std::to_string(s_.index), sr = std::to_string(static_cast<long>(kRate)),
                               sf = std::to_string(static_cast<long long>(freq_ + off_));
@@ -229,12 +235,14 @@ public:
             const pid_t pid = child_;
             child_ = 0;
             kill(pid, SIGTERM);
+            gRtlExiting++;
             std::thread([pid] {
                 for (int i = 0; i < 30 && waitpid(pid, nullptr, WNOHANG) == 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 if (waitpid(pid, nullptr, WNOHANG) == 0) {
                     kill(pid, SIGKILL);
                     waitpid(pid, nullptr, 0);
                 }
+                gRtlExiting--;
             }).detach();
         }
     }

@@ -89,6 +89,9 @@ The frequency, the gains, the amplifier, the bias tee and the ppm correction cha
 | F11 | Full screen |
 | Cmd+1, Cmd+2 | Hide or show the Receive, the Transmit column |
 | Cmd+O | Open an IQ file |
+| [ and ] | Receive frequency 5 kHz down, up (Shift: 50 kHz) |
+| Cmd+Z | Back to the frequency before the last retune |
+| Tab, arrows, Space or Return | Move between the controls and press them (keyboard only) |
 
 **Transmit**
 
@@ -128,7 +131,8 @@ The frequency, the TX gain and the amplifier change at once while transmitting. 
 - Tested with recordings and with simulated receivers: noise, frequency offset, clock offset, phase noise, IQ imbalance, DC offset and 8-bit samples. Not yet tested over the air.
 - Without protection a lost code word loses its packets, and the picture repairs itself at the next key frame.
 - The 4K120 demo is made from a 60 fps master by motion interpolation.
-- macOS only.
+- macOS only (Apple silicon tested); Windows and Linux are planned.
+- Screen readers: the app draws its own controls (Dear ImGui), so VoiceOver cannot read them. Everything can be reached from the keyboard (see the keys above), and every status colour has a word next to it.
 
 ## Licence
 
