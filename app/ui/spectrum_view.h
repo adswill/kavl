@@ -31,9 +31,16 @@ public:
     void load(const Settings& s);
     void save(Settings& s) const;
     bool waterfall = true;
+    bool findSignals = true;   // tags on the signals that stand out of the noise, click to tune
 
 private:
     void addRow(const std::vector<float>& db);
+    void findSignalsIn(const std::vector<float>& db, double fs);
+    struct Found {
+        double u0, u1;   // where it is, as fractions of the span (0..1)
+        float level;     // its mean level above the noise (dB)
+    };
+    std::vector<Found> found_;
     float lo_ = 0.f, hi_ = 1.f;   // the part of the span on show (0..1)
     bool peak_ = false, autoRange_ = true;
     float avg_ = 0.5f, minDb_ = -100.f, maxDb_ = -30.f, split_ = 0.45f;

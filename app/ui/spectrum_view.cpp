@@ -5,6 +5,7 @@
 #include "spectrum_view.h"
 #include "settings.h"
 #include "theme.h"
+#include "kavl/kavl_phy.h"
 
 #include <OpenGL/gl3.h>
 
@@ -58,6 +59,7 @@ void SpectrumView::clear() {
 
 void SpectrumView::load(const Settings& s) {
     waterfall = s.flag("view.waterfall", true);
+    findSignals = s.flag("spec.findSignals", true);
     peak_ = s.flag("spec.peak", false);
     autoRange_ = s.flag("spec.autoRange", true);
     avg_ = std::clamp(static_cast<float>(s.num("spec.avg", 0.5)), 0.f, 0.95f);
@@ -68,6 +70,7 @@ void SpectrumView::load(const Settings& s) {
 
 void SpectrumView::save(Settings& s) const {
     s.set("view.waterfall", waterfall);
+    s.set("spec.findSignals", findSignals);
     s.set("spec.peak", peak_);
     s.set("spec.autoRange", autoRange_);
     s.set("spec.avg", static_cast<double>(avg_));
@@ -92,17 +95,10 @@ void SpectrumView::options() {
     ImGui::SetItemTooltip("Keeps the highest level each frequency reached (a thin line); switch off and on to start again");
     flow(boxW("Auto range"));
     ImGui::Checkbox("Auto range", &autoRange_);
-    ImGui::SetItemTooltip("The dB range follows the noise floor and the strongest signal. Off: set it with the two sliders");
-    if (!autoRange_) {
-        flow(110 * k);
-        ImGui::SetNextItemWidth(110 * k);
-        ImGui::SliderFloat("##min", &minDb_, -140.f, maxDb_ - 5.f, "Min %.0f dB");
-        ImGui::SetItemTooltip("The level at the bottom of the spectrum and the darkest waterfall colour");
-        flow(110 * k);
-        ImGui::SetNextItemWidth(110 * k);
-        ImGui::SliderFloat("##max", &maxDb_, minDb_ + 5.f, 20.f, "Max %.0f dB");
-        ImGui::SetItemTooltip("The level at the top of the spectrum and the brightest waterfall colour");
-    }
+    ImGui::SetItemTooltip("The dB range follows the noise floor and the strongest signal. Moving Max or Min beside the plot sets it by hand");
+    flow(boxW("Find signals"));
+    ImGui::Checkbox("Find signals", &findSignals);
+    ImGui::SetItemTooltip("Marks the signals that stand out of the noise; click a mark to tune to it");
     flow(boxW("Waterfall"));
     ImGui::Checkbox("Waterfall", &waterfall);
     ImGui::SetItemTooltip("The history of the spectrum below it");
@@ -113,6 +109,37 @@ void SpectrumView::options() {
         ImGui::PopStyleVar();
         ImGui::SetItemTooltip("Zoom out (or double-click the spectrum)");
     }
+}
+
+// Signals: runs of bins at least 8 dB above the noise floor (its 20th percentile), small gaps bridged, at least 100 kHz wide (the narrowest KAVL
+// profile is 160 kHz); the six strongest are kept.
+void SpectrumView::findSignalsIn(const std::vector<float>& db, double fs) {
+    found_.clear();
+    const int n = static_cast<int>(db.size());
+    if (n < 16 || fs <= 0) return;
+    std::vector<float> sorted(db);
+    std::nth_element(sorted.begin(), sorted.begin() + n / 5, sorted.end());
+    const float floorDb = sorted[static_cast<size_t>(n / 5)], thr = floorDb + 8.f;
+    const int minBins = std::max(3, static_cast<int>(std::ceil(100e3 / fs * n)));
+    for (int i = 0; i < n;) {
+        if (db[static_cast<size_t>(i)] <= thr) {
+            i++;
+            continue;
+        }
+        int j = i, gap = 0;
+        double sum = 0;
+        int cnt = 0;
+        while (j < n && gap <= 2) {   // a dip of up to 2 bins stays inside the signal
+            if (db[static_cast<size_t>(j)] > thr) gap = 0, sum += db[static_cast<size_t>(j)], cnt++;
+            else gap++;
+            j++;
+        }
+        const int end = j - gap;   // one past the last bin above
+        if (end - i >= minBins) found_.push_back({static_cast<double>(i) / n, static_cast<double>(end) / n, static_cast<float>(sum / cnt - floorDb)});
+        i = j;
+    }
+    std::sort(found_.begin(), found_.end(), [](const Found& a, const Found& b) { return a.level > b.level; });
+    if (found_.size() > 6) found_.resize(6);
 }
 
 void SpectrumView::addRow(const std::vector<float>& db) {
@@ -161,13 +188,16 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
         autoLo_ += ((floorDb - 4.f) - autoLo_) * 0.05f;   // the noise in dark blue
         autoHi_ += (std::max(top + 4.f, floorDb + 25.f) - autoHi_) * 0.05f;
         addRow(db);
+        if (findSignals) findSignalsIn(disp_, in.fs);
+        else found_.clear();
     }
     const float dbLo = autoRange_ ? autoLo_ : minDb_, dbHi = autoRange_ ? autoHi_ : maxDb_;
     auto* dl = ImGui::GetWindowDrawList();
     const ImVec2 o = ImGui::GetCursorScreenPos();
     const float k = ImGui::GetStyle().FontScaleMain;   // the gutters hold text: they grow with the text size
     const float scaleW = 38.f * k, axisH = 18.f * k, splitH = 6.f;
-    const float plotX0 = o.x + scaleW, plotW = std::max(10.f, size.x - scaleW);
+    const float sliderW = 16.f * k, gutterW = 3 * sliderW + 4 * 6.f;   // Zoom, Max, Min beside the plot (as SDR++ has them)
+    const float plotX0 = o.x + scaleW, plotW = std::max(10.f, size.x - scaleW - gutterW);
     const float avail = size.y - axisH - (waterfall ? splitH : 0.f);
     const float specH = waterfall ? std::max(30.f, avail * split_) : avail;
     const float wfH = waterfall ? std::max(0.f, avail - specH) : 0.f;
@@ -217,7 +247,8 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
         const double c = in.rxHz + (bandDrag_ ? bandShiftHz_ : 0.0);
         const float bx0 = xOfU(uOfHz(c - in.bandHalfHz)), bx1 = xOfU(uOfHz(c + in.bandHalfHz)), cx = xOfU(uOfHz(c));
         dl->AddRectFilled(ImVec2(bx0, s0.y), ImVec2(bx1, s1.y), ImGui::GetColorU32(pal::accent(bandDrag_ ? 0.22f : 0.12f)));
-        dl->AddLine(ImVec2(cx, s0.y), ImVec2(cx, s1.y), ImGui::GetColorU32(pal::accent(0.7f)), 1.f);
+        dl->AddLine(ImVec2(cx, s0.y), ImVec2(cx, s1.y), ImGui::GetColorU32(pal::accent(0.5f)), 1.f);
+        for (float ex : {bx0, bx1}) dl->AddLine(ImVec2(ex, s0.y), ImVec2(ex, s1.y), ImGui::GetColorU32(pal::accent(0.95f)), 1.5f);   // what decodes
     }
     if (have && in.txHz > 0) {   // this Mac's transmitter
         const float tx = xOfU(uOfHz(in.txHz));
@@ -242,6 +273,20 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
         const ImVec2 ts = ImGui::CalcTextSize(t);
         dl->AddText(ImVec2(s0.x + (plotW - ts.x) * 0.5f, s0.y + (specH - ts.y) * 0.5f), label, t);
     }
+    // the range the band decodes, at its foot, over the trace
+    if (have && in.bandHalfHz > 0) {
+        const double c = in.rxHz + (bandDrag_ ? bandShiftHz_ : 0.0);
+        const float cx = xOfU(uOfHz(c));
+        // the range it decodes, at the foot of the band
+        char t[64];
+        std::snprintf(t, sizeof(t), "%.3f-%.3f MHz  %.0f kHz", (c - in.bandHalfHz) / 1e6, (c + in.bandHalfHz) / 1e6, 2 * in.bandHalfHz / 1e3);
+        ImGui::PushFont(small);
+        const ImVec2 ts = ImGui::CalcTextSize(t);
+        const float lx = std::clamp(cx - ts.x * 0.5f, plotX0 + 2, plotX0 + plotW - ts.x - 2), ly = s1.y - ts.y - 4;
+        dl->AddRectFilled(ImVec2(lx - 4, ly - 1), ImVec2(lx + ts.x + 4, ly + ts.y + 1), ImGui::GetColorU32(ImVec4(0.02f, 0.021f, 0.023f, 0.85f)), 3.f);
+        dl->AddText(ImVec2(lx, ly), ImGui::GetColorU32(pal::accent()), t);
+        ImGui::PopFont();
+    }
     // the waterfall (the part of the texture on show)
     if (waterfall && wfH > 1) {
         if (tex_) {   // the ring from the newest row (head_) down to the end, then from the start up to head_
@@ -255,7 +300,7 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
             const double c = in.rxHz + (bandDrag_ ? bandShiftHz_ : 0.0);
             for (double e : {c - in.bandHalfHz, c + in.bandHalfHz}) {
                 const float x = xOfU(uOfHz(e));
-                dl->AddLine(ImVec2(x, wfY0), ImVec2(x, wfY0 + wfH), ImGui::GetColorU32(pal::accent(0.35f)), 1.f);
+                dl->AddLine(ImVec2(x, wfY0), ImVec2(x, wfY0 + wfH), ImGui::GetColorU32(pal::accent(0.75f)), 1.5f);
             }
         }
     }
@@ -329,15 +374,105 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
             bandShiftHz_ = 0;
         }
     };
-    plotMouse("##specmouse", o, ImVec2(size.x, specH + axisH), true);
+    plotMouse("##specmouse", o, ImVec2(size.x - gutterW, specH + axisH), true);
     if (waterfall) {
         ImGui::SetCursorScreenPos(ImVec2(o.x, axisY + axisH));
-        ImGui::InvisibleButton("##split", ImVec2(size.x, splitH));
+        ImGui::InvisibleButton("##split", ImVec2(size.x - gutterW, splitH));
         if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
         if (ImGui::IsItemActive() && avail > 0) split_ = std::clamp(split_ + io.MouseDelta.y / avail, 0.15f, 0.85f);
         dl->AddLine(ImVec2(plotX0 + plotW * 0.45f, axisY + axisH + splitH * 0.5f), ImVec2(plotX0 + plotW * 0.55f, axisY + axisH + splitH * 0.5f),
                     ImGui::GetColorU32(pal::grey()), 2.f);
-        plotMouse("##wfmouse", ImVec2(o.x, wfY0), ImVec2(size.x, wfH), false);
+        plotMouse("##wfmouse", ImVec2(o.x, wfY0), ImVec2(size.x - gutterW, wfH), false);
+    }
+    // the signals found: a tag over each, a click tunes to its middle
+    if (have && findSignals && !found_.empty()) {
+        ImGui::PushFont(small);
+        std::vector<std::pair<float, float>> placed;   // x ranges already used on each row
+        int row = 0;
+        for (size_t i = 0; i < found_.size(); i++) {
+            const Found& f = found_[i];
+            const double mid = (f.u0 + f.u1) / 2, widthHz = (f.u1 - f.u0) * in.fs, hz = hzOfU(mid);
+            if (mid < lo_ || mid > hi_) continue;
+            // the profiles this width fits (within 25 %), by their short names: one symbol rate can carry two (1440p60 and 1080p60 robust)
+            std::string profs;
+            double best = 1e9;
+            for (int p = 0; p < kavl::kNumVideoProfiles; p++)
+                best = std::min(best, std::abs(kavl::occupiedHz(kavl::videoProfile(p).symRate) - widthHz));
+            for (int p = 0; p < kavl::kNumVideoProfiles; p++) {
+                const auto& vp = kavl::videoProfile(p);
+                const double ow = kavl::occupiedHz(vp.symRate);
+                if (std::abs(ow - widthHz) > 0.25 * ow || std::abs(ow - widthHz) > best + 1.0) continue;
+                const std::string nm(vp.name);
+                profs += (profs.empty() ? "" : " / ") + nm.substr(0, nm.find(','));
+            }
+            const char* prof = profs.empty() ? nullptr : profs.c_str();
+            const bool here = std::abs(hz - in.rxHz) < std::max(5e3, widthHz * 0.1);
+            char t[96];
+            std::snprintf(t, sizeof(t), "%.3f  %.0f kHz%s%s", hz / 1e6, widthHz / 1e3, prof ? "  " : "", prof ? prof : "");
+            const ImVec2 ts = ImGui::CalcTextSize(t);
+            const float w = ts.x + 12, h = std::max(24.f, ts.y + 8);
+            const float x = std::clamp(xOfU(mid) - w * 0.5f, plotX0 + 2, plotX0 + plotW - w - 2);
+            row = 0;
+            for (const auto& pr : placed)
+                if (x < pr.second && x + w > pr.first) row++;
+            placed.emplace_back(x, x + w);
+            const float y = s0.y + 4 + row * (h + 2);
+            if (y + h > s1.y - 4) continue;   // no room on a short plot
+            ImGui::SetCursorScreenPos(ImVec2(x, y));
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::PushStyleColor(ImGuiCol_Button, here ? pal::accentDeep() : ImVec4(0.10f, 0.105f, 0.11f, 0.92f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, (h - ts.y) * 0.5f));
+            if (ImGui::Button(t)) {
+                tuneHz = std::round(hz / 1000.0) * 1000.0;
+                tuned = true;
+                pendingAt_ = -1;
+            }
+            ImGui::SetItemTooltip(here ? "Tuned here" : "Tune to this signal");
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
+        ImGui::PopFont();
+    }
+    // Zoom, Max, Min: vertical sliders beside the plot
+    {
+        const float gx = o.x + size.x - gutterW + 6.f, labelH = ImGui::GetTextLineHeight() + 4;
+        const float sh = std::max(40.f, size.y - labelH);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+        ImGui::PushFont(small);
+        auto label = [&](float x, const char* t) {
+            const ImVec2 ts = ImGui::CalcTextSize(t);
+            dl->AddText(ImVec2(x + (sliderW - ts.x) * 0.5f, o.y + sh + 2), ImGui::GetColorU32(pal::grey()), t);
+        };
+        float zoom = static_cast<float>(1.0 / span);
+        ImGui::SetCursorScreenPos(ImVec2(gx, o.y));
+        if (ImGui::VSliderFloat("##zoom", ImVec2(sliderW, sh), &zoom, 1.f, 100.f, "", ImGuiSliderFlags_Logarithmic)) {
+            const double c = (lo_ + hi_) / 2, half = 0.5 / zoom;
+            double nlo = c - half, nhi = c + half;
+            const double sh2 = nlo < 0 ? -nlo : nhi > 1 ? 1 - nhi : 0;
+            lo_ = static_cast<float>(nlo + sh2), hi_ = static_cast<float>(nhi + sh2);
+        }
+        ImGui::SetItemTooltip("Zoom %.1fx (or the mouse wheel on the plot; double-click: whole span)", zoom);
+        label(gx, "Z");
+        float mx = dbHi, mn = dbLo;
+        ImGui::SetCursorScreenPos(ImVec2(gx + sliderW + 6.f, o.y));
+        if (ImGui::VSliderFloat("##max", ImVec2(sliderW, sh), &mx, -140.f, 20.f, "")) {
+            if (autoRange_) minDb_ = dbLo;
+            autoRange_ = false;
+            maxDb_ = std::max(mx, minDb_ + 5.f);
+        }
+        ImGui::SetItemTooltip("Max %.0f dB: the top of the spectrum, the brightest waterfall colour (sets the range by hand; Auto range goes back)", dbHi);
+        label(gx + sliderW + 6.f, "Max");
+        ImGui::SetCursorScreenPos(ImVec2(gx + 2 * (sliderW + 6.f), o.y));
+        if (ImGui::VSliderFloat("##min", ImVec2(sliderW, sh), &mn, -140.f, 20.f, "")) {
+            if (autoRange_) maxDb_ = dbHi;
+            autoRange_ = false;
+            minDb_ = std::min(mn, maxDb_ - 5.f);
+        }
+        ImGui::SetItemTooltip("Min %.0f dB: the bottom of the spectrum, the darkest waterfall colour (sets the range by hand; Auto range goes back)", dbLo);
+        label(gx + 2 * (sliderW + 6.f), "Min");
+        ImGui::PopFont();
+        ImGui::PopStyleVar();
     }
     if (pendingAt_ >= 0 && ImGui::GetTime() - pendingAt_ > io.MouseDoubleClickTime) {
         tuneHz = pendingTuneHz_;
