@@ -5,7 +5,8 @@
 //   Receive:  IQ file / RTL-SDR (rtl_tcp) / HackRF -> KAVL receiver -> video + sound; signal state, link margin, constellation, spectrum, waterfall.
 //   Transmit: a video file -> AV1 + Opus for a profile (ffmpeg) -> KAVL signal -> HackRF or IQ .wav.
 // Options: --file IQ.wav (start receiving it), --profile N, --tab rx|tx, --mute, --hidden, --shot OUT.png [--shot-after S] (a picture of the
-// window after S seconds, then quit).
+// window after S seconds, then quit). Checks without radios: --loopback (test pattern sent to this Mac's receiver), --fec N, --report (a status
+// line every second on stdout), --run-for S (quit after S seconds).
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
@@ -19,6 +20,7 @@
 #include "settings.h"
 #include "theme.h"
 #include "live_feed.h"
+#include "loopback.h"
 #include "tx_engine.h"
 #include "video_gl.h"
 #include "kavl/kavl_fec.h"
@@ -125,7 +127,7 @@ struct App {
     ImFont *ui = nullptr, *bold = nullptr, *mono = nullptr, *big = nullptr;
     int tab = 0;
     // receive
-    int srcKind = 0;   // 0 IQ file, 1 RTL-SDR, 2 HackRF
+    int srcKind = 0;   // 0 IQ file, 1 RTL-SDR, 2 HackRF, 3 loopback (this Mac's transmitter)
     std::string iqPath;
     double freqMHz = 433.0;
     int profile = -1;   // -1 = Auto
@@ -163,7 +165,7 @@ App* gApp = nullptr;
 void loadSettings(App& a) {
     Settings& c = a.cfg;
     c.load();
-    a.srcKind = static_cast<int>(c.num("rx.source", 0));
+    a.srcKind = std::clamp(static_cast<int>(c.num("rx.source", 0)), 0, 3);
     a.iqPath = c.str("rx.file");
     a.freqMHz = c.num("rx.freqMHz", 433.0);
     a.profile = std::clamp(static_cast<int>(c.num("rx.profile", -1)), -1, kavl::kNumVideoProfiles - 1);   // -1 = Auto
@@ -183,7 +185,7 @@ void loadSettings(App& a) {
     a.txFreqMHz = c.num("tx.freqMHz", 433.0);
     a.txGain = static_cast<int>(c.num("tx.gain", 20));
     a.txAmp = c.flag("tx.amp", false);
-    a.txDest = static_cast<int>(c.num("tx.dest", 0));
+    a.txDest = std::clamp(static_cast<int>(c.num("tx.dest", 0)), 0, 2);
     a.txFec = std::clamp(static_cast<int>(c.num("tx.fec", 0)), 0, kavl::fec::kNumProfiles - 1);
     a.txSource = std::clamp(static_cast<int>(c.num("tx.source", 0)), 0, 2);
     a.liveFps = static_cast<int>(c.num("tx.liveFps", 0));
@@ -284,6 +286,8 @@ void startRx(App& a) {
             s.index = a.rtlDevs[static_cast<size_t>(a.rtlDev)].index;
         }
         src = makeRtlSource(s, a.freqMHz * 1e6, width);
+    } else if (a.srcKind == 3) {
+        src = makeLoopbackSource(a.freqMHz * 1e6);
     } else {
         if (a.hrfDevs.empty()) refreshDevices(a);
         HackRfSettings s = a.hrf;
@@ -293,6 +297,26 @@ void startRx(App& a) {
     if (!a.rx.start(std::move(src), a.profile)) a.rxError = a.rx.error();
     a.havePic = false;
     std::fill(a.wf.begin(), a.wf.end(), 0xFF000000u);
+}
+
+void startTx(App& a) {
+    TxEngine::Dest d;
+    d.toFile = a.txDest == 1;
+    d.loopback = a.txDest == 2;
+    d.path = a.txFilePath;
+    d.freqHz = a.txFreqMHz * 1e6;
+    d.txGainDb = a.txGain;
+    d.amp = a.txAmp;
+    if (!a.hrfDevs.empty() && a.txHrfDev < static_cast<int>(a.hrfDevs.size())) d.serial = a.hrfDevs[static_cast<size_t>(a.txHrfDev)].serial;
+    if (a.txSource == 0) {
+        a.tx.start(d);
+    } else {
+        const int cam = a.txSource == 2 || a.cameras.empty() ? -1 : a.cameras[static_cast<size_t>(std::clamp(a.camera, 0, static_cast<int>(a.cameras.size()) - 1))].index;
+        const int mic = a.txSource == 2 || a.microphone < 0 || a.microphone >= static_cast<int>(a.microphones.size())
+                            ? -1
+                            : a.microphones[static_cast<size_t>(a.microphone)].index;
+        a.tx.startLive(d, a.txProfile, a.txFec, cam, mic, a.liveFps ? 60 : 30);
+    }
 }
 
 // ---- drawing helpers ------------------------------------------------------------------------------------------------------------------------------------
@@ -405,6 +429,13 @@ void radioSettings(App& a) {
         return;
     }
     if (run) ImGui::BeginDisabled();
+    if (a.srcKind == 3) {
+        ImGui::TextDisabled("From this Mac's transmitter (Send to: Loopback)");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputDouble("##freq", &a.freqMHz, 0.1, 1.0, "%.4f MHz");
+        if (run) ImGui::EndDisabled();
+        return;
+    }
     if (a.srcKind == 1) {
         ImGui::Checkbox("Remote rtl_tcp server", &a.rtl.remote);
         if (a.rtl.remote) {
@@ -472,7 +503,7 @@ void receivePanel(App& a, float leftW, float contentH) {
     const bool run = a.rx.running();
     if (run) ImGui::BeginDisabled();
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##src", &a.srcKind, "IQ file\0RTL-SDR (rtl_tcp)\0HackRF\0") && a.srcKind > 0) refreshDevices(a);
+    if (ImGui::Combo("##src", &a.srcKind, "IQ file\0RTL-SDR (rtl_tcp)\0HackRF\0Loopback (this Mac's transmitter)\0") && a.srcKind > 0) refreshDevices(a);
     ImGui::SetNextItemWidth(-1);
     int sel = a.profile + 1;   // 0 = Auto
     if (ImGui::Combo("##prof", &sel, [](void*, int i) { return i == 0 ? "Auto (find the profile)" : kavl::videoProfile(i - 1).name; }, nullptr,
@@ -650,7 +681,13 @@ void transmitPage(App& a, float h) {
     ImGui::RadioButton("HackRF", &a.txDest, 0);
     ImGui::SameLine();
     ImGui::RadioButton("IQ file (.wav)", &a.txDest, 1);
-    if (a.txDest == 0) {
+    ImGui::SameLine();
+    ImGui::RadioButton("Loopback", &a.txDest, 2);
+    ImGui::SetItemTooltip("To this Mac's receiver, no radio (Receive source: Loopback). For trying things out.");
+    if (a.txDest == 2) {
+        ImGui::SetNextItemWidth(170);
+        ImGui::InputDouble("##txf", &a.txFreqMHz, 0.1, 1.0, "%.4f MHz");
+    } else if (a.txDest == 0) {
         if (a.hrfDevs.size() > 1) {
             ImGui::SetNextItemWidth(260);
             ImGui::Combo("##txdev", &a.txHrfDev, [](void* d, int i) { return (*static_cast<std::vector<RadioDevice>*>(d))[static_cast<size_t>(i)].label.c_str(); },
@@ -672,27 +709,10 @@ void transmitPage(App& a, float h) {
     if (a.tx.running()) ImGui::EndDisabled();
     const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec;
     const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
-    const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest == 0 || !a.txFilePath.empty());
+    const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty());
     if (!a.tx.running()) {
         if (!canStart) ImGui::BeginDisabled();
-        if (ImGui::Button(a.txDest == 0 ? "  Start transmitting  " : "  Write the IQ file  ")) {
-            TxEngine::Dest d;
-            d.toFile = a.txDest == 1;
-            d.path = a.txFilePath;
-            d.freqHz = a.txFreqMHz * 1e6;
-            d.txGainDb = a.txGain;
-            d.amp = a.txAmp;
-            if (!a.hrfDevs.empty() && a.txHrfDev < static_cast<int>(a.hrfDevs.size())) d.serial = a.hrfDevs[static_cast<size_t>(a.txHrfDev)].serial;
-            if (a.txSource == 0) {
-                a.tx.start(d);
-            } else {
-                const int cam = a.txSource == 2 ? -1 : a.cameras[static_cast<size_t>(std::clamp(a.camera, 0, static_cast<int>(a.cameras.size()) - 1))].index;
-                const int mic = a.txSource == 2 || a.microphone < 0 || a.microphone >= static_cast<int>(a.microphones.size())
-                                    ? -1
-                                    : a.microphones[static_cast<size_t>(a.microphone)].index;
-                a.tx.startLive(d, a.txProfile, a.txFec, cam, mic, a.liveFps ? 60 : 30);
-            }
-        }
+        if (ImGui::Button(a.txDest != 1 ? "  Start transmitting  " : "  Write the IQ file  ")) startTx(a);
         if (!canStart) ImGui::EndDisabled();
         if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec))
             ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
@@ -873,6 +893,15 @@ void frame(App& a) {
     aboutWindows(a);
 }
 
+void printReport(App& a, double t) {
+    const auto st = a.rx.stats();
+    const auto ps = a.player.status();
+    const auto ts = a.tx.status();
+    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f | tx frames=%ld underruns=%ld\n", t, st.frames, st.lost,
+                st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ts.frames, ts.underruns);
+    std::fflush(stdout);
+}
+
 void writeShot(GLFWwindow* w, const std::string& path) {
     int fw, fh;
     glfwGetFramebufferSize(w, &fw, &fh);
@@ -894,8 +923,9 @@ void writeShot(GLFWwindow* w, const std::string& path) {
 int main(int argc, char** argv) {
     std::string file, shot;
     double shotAfter = 8.0;
-    bool hidden = false, mute = false;
-    int profile = -1, tab = -1;
+    bool hidden = false, mute = false, loopback = false, report = false;
+    int profile = -1, tab = -1, fecArg = -1;
+    double runFor = 0;
     for (int i = 1; i < argc; i++) {
         const std::string k = argv[i];
         auto val = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -906,6 +936,10 @@ int main(int argc, char** argv) {
         else if (k == "--hidden") hidden = true;
         else if (k == "--mute") mute = true;
         else if (k == "--tab") tab = val() == "tx" ? 1 : 0;
+        else if (k == "--loopback") loopback = true;
+        else if (k == "--fec") fecArg = std::clamp(std::atoi(val().c_str()), 0, kavl::fec::kNumProfiles - 1);
+        else if (k == "--report") report = true;
+        else if (k == "--run-for") runFor = std::atof(val().c_str());
     }
     if (!glfwInit()) return 1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -961,7 +995,17 @@ int main(int argc, char** argv) {
         if (const double f = frequencyFromName(file)) app.freqMHz = f / 1e6;
         startRx(app);
     }
+    if (fecArg >= 0) app.txFec = fecArg;
+    if (loopback) {
+        app.txSource = 2;
+        app.txDest = 2;
+        app.srcKind = 3;
+        app.txFreqMHz = app.freqMHz;
+        startTx(app);
+        startRx(app);
+    }
     const double t0 = glfwGetTime();
+    double nextReport = 1.0;
     while (!glfwWindowShouldClose(w)) {
         glfwPollEvents();
         ImGui_ImplOpenGL3_NewFrame();
@@ -975,6 +1019,11 @@ int main(int argc, char** argv) {
         glClearColor(0.055f, 0.058f, 0.062f, 1);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        if (report && glfwGetTime() - t0 > nextReport) {
+            nextReport += 1.0;
+            printReport(app, glfwGetTime() - t0);
+        }
+        if (runFor > 0 && glfwGetTime() - t0 > runFor) break;
         if (!shot.empty() && glfwGetTime() - t0 > shotAfter) {
             writeShot(w, shot);
             break;

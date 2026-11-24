@@ -5,6 +5,7 @@
 #include "tx_engine.h"
 #include "kavl/kavl_media.h"
 #include "kavl/kavl_resampler.h"
+#include "loopback.h"
 
 #include <libhackrf/hackrf.h>
 
@@ -33,6 +34,14 @@ double probeDuration(const std::string& path) {
     const bool ok = std::fgets(buf, sizeof(buf), p) != nullptr;
     pclose(p);
     return ok ? std::atof(buf) : 0;
+}
+
+// the output sample rate: 4 x the symbol rate for a file, 2.4 Msps for the loopback, else a whole multiple of it of at least 2 Msps (HackRF)
+double txRate(const TxEngine::Dest& d, double symRate) {
+    const double r4 = kavl::kSps * symRate;
+    if (d.toFile) return r4;
+    if (d.loopback) return LoopbackBus::kRate;
+    return r4 * std::max(1, static_cast<int>(std::ceil(2.0e6 / r4)));
 }
 
 }  // namespace
@@ -175,10 +184,9 @@ bool TxEngine::start(const Dest& d) {
         ring_.clear();
     }
     const kavl::VideoProfile& vp = kavl::videoProfile(profile_);
-    const double r4 = kavl::kSps * vp.symRate;
-    const int m = d.toFile ? 1 : std::max(1, static_cast<int>(std::ceil(2.0e6 / r4)));
-    const double rate = r4 * m;
-    if (!d.toFile) {
+    const double rate = txRate(d, vp.symRate);
+    freqHz_ = d.freqHz;
+    if (!d.toFile && !d.loopback) {
         hackrf_device* dev = nullptr;
         if (hackrf_init() != HACKRF_SUCCESS || (d.serial.empty() ? hackrf_open(&dev) : hackrf_open_by_serial(d.serial.c_str(), &dev)) != HACKRF_SUCCESS) {
             std::lock_guard<std::mutex> sl(stMtx_);
@@ -201,6 +209,22 @@ bool TxEngine::start(const Dest& d) {
     }
     running_ = true;
     txTh_ = std::thread([this, d] { modulateLoop(d); });
+    if (d.loopback) {   // drain the ring in real time, as a HackRF would, into this Mac's receiver
+        lbTh_ = std::thread([this, rate] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+            const int len = static_cast<int>(rate / 100.0) * 2;   // 10 ms of int8 I/Q
+            std::vector<uint8_t> b(static_cast<size_t>(len));
+            std::vector<kavl::cf> x(static_cast<size_t>(len / 2));
+            auto next = std::chrono::steady_clock::now();
+            while (!quit_) {
+                fill(b.data(), len);
+                for (size_t i = 0; i < x.size(); i++) x[i] = kavl::cf(static_cast<int8_t>(b[2 * i]) / 128.f, static_cast<int8_t>(b[2 * i + 1]) / 128.f);
+                LoopbackBus::get().push(x.data(), x.size(), freqHz_.load());
+                next += std::chrono::milliseconds(10);
+                std::this_thread::sleep_until(next);
+            }
+        });
+    }
     if (dev_) {
         // let the modulator fill a little first, then start the radio
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
@@ -218,6 +242,7 @@ bool TxEngine::start(const Dest& d) {
 void TxEngine::stop() {
     quit_ = true;
     if (txTh_.joinable()) txTh_.join();
+    if (lbTh_.joinable()) lbTh_.join();
     feed_.stop();
     live_ = false;
     if (dev_) {
@@ -239,10 +264,10 @@ void TxEngine::modulateLoop(Dest d) {
     const kavl::VideoProfile& vp = kavl::videoProfile(profile_);
     const kavl::Modcod& mc = *kavl::modcod(vp.modcod);
     const double r4 = kavl::kSps * vp.symRate;
-    const int m = d.toFile ? 1 : std::max(1, static_cast<int>(std::ceil(2.0e6 / r4)));
-    const double rate = r4 * m;
+    const double rate = txRate(d, vp.symRate);
+    const bool resample = std::abs(rate - r4) > 0.5;
     kavl::Resampler up;
-    if (m > 1) up.configure(r4, rate);
+    if (resample) up.configure(r4, rate);
     FILE* wav = nullptr;
     long long wavSamples = 0;
     if (d.toFile) {
@@ -343,7 +368,7 @@ void TxEngine::modulateLoop(Dest d) {
         const auto shaped = kavl::Transmitter::shape(win);
         std::vector<kavl::cf> iq(shaped.begin() + static_cast<long>(H) * kavl::kSps, shaped.begin() + static_cast<long>(H + cur.size()) * kavl::kSps);
         std::vector<kavl::cf> out;
-        if (m > 1) up.process(iq.data(), iq.size(), out);
+        if (resample) up.process(iq.data(), iq.size(), out);
         else out.swap(iq);
         if (wav) {
             std::vector<int16_t> s(out.size() * 2);

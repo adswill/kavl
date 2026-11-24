@@ -37,6 +37,7 @@ public:
         int txGainDb = 20;         // HackRF TX VGA, 0..47
         bool amp = false;          // HackRF RF amplifier (+14 dB)
         std::string serial;        // HackRF serial, empty = the first one
+        bool loopback = false;     // to this Mac's receiver (loopback.h) instead of a HackRF
     };
     bool start(const Dest& d);
     // Live: camera (or the test pattern, camera < 0) and microphone (-1 = none) encoded in real time for the profile while transmitting.
@@ -59,7 +60,8 @@ private:
     void encodeJob(std::string path, int profile, int fecIdx);
     void modulateLoop(Dest d);
 
-    std::thread prepTh_, txTh_;
+    std::thread prepTh_, txTh_, lbTh_;
+    std::atomic<double> freqHz_{433e6};
     std::atomic<bool> preparing_{false}, ready_{false}, running_{false}, quit_{false};
     std::atomic<float> progress_{0};
     std::mutex msgMtx_;
