@@ -17,6 +17,7 @@ namespace {
 // Table 6.7: Q of the Type B codes, Ninner = 64800
 int qOf(int rate15) {
     switch (rate15) {
+    case 6: return 108;
     case 8: return 84;
     case 9: return 72;
     case 10: return 60;

@@ -35,6 +35,7 @@ const std::array<Modcod, kNumModcods>& table() {
         make(9, "NUC-1024 12/15", 10, 12),
         // weak-signal modes within the same width (owner: never above 1 MHz, even for 1080p60): 1080p60 in about 950 kHz, 650 kHz
         make(10, "QPSK 11/15", 2, 11),      make(11, "NUC-16 8/15", 4, 8),
+        make(12, "QPSK 6/15", 2, 6),   // about 0 dB: the 0 dB profile family
     };
     return t;
 }

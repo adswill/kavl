@@ -11,7 +11,7 @@ namespace kavl {
 
 class Ldpc {
 public:
-    explicit Ldpc(int rate15);   // 8 <= rate15 <= 13
+    explicit Ldpc(int rate15);   // rate15 6 or 8..13 (the Type B codes of A/322)
     bool ok() const { return k_ > 0; }
     int n() const { return n_; }
     int k() const { return k_; }
