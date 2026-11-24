@@ -28,6 +28,8 @@ public:
     bool start(std::unique_ptr<IqSource> src, int profile);
     void stop();
     bool running() const { return running_; }
+    // The radio was retuned: the receiver starts afresh (no stale tracking or samples) and, with Auto, finds the profile again.
+    void retuned() { retune_ = true; }
     IqSource* source() { return src_.get(); }
     const std::string& error() const { return err_; }
 
@@ -64,6 +66,7 @@ private:
     // one profile until stopped (false) or, with autoProfile, until nothing came for 3 s (true)
     bool receive(int profile, bool autoProfile, double fs, double offset, long long& n0, std::chrono::steady_clock::time_point wall0);
     long lostBefore_ = 0, rebuiltBefore_ = 0;   // of the demuxers before the current one
+    std::atomic<bool> retune_{false};
     int detect(double fs, double offset);   // the profile of the signal, -1 when stopped first
     double signalWidthHz();                 // the width of what stands out of the noise where the signal should be (spectrum), 0 if nothing
 

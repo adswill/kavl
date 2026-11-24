@@ -186,7 +186,7 @@ void Player::videoLoop() {
     std::deque<kavl::av::Packet> local;
     Dav1dContext* dec = nullptr;
     int epoch = -1;
-    bool keySeen = false;
+    bool keySeen = false, still = false;
     Clock::time_point firstKeyAt;
     auto openDecoder = [&]() {
         if (dec) dav1d_close(&dec);
@@ -240,6 +240,7 @@ void Player::videoLoop() {
                 local.clear();
                 pics.clear();
                 keySeen = false;
+                still = false;
                 openDecoder();
             }
             while (!vq_.empty() && local.size() < 1200) {
@@ -290,6 +291,16 @@ void Player::videoLoop() {
                 take(p);
                 dav1d_picture_unref(&p);
             }
+        }
+        if (!playing_ && !still && !pics.empty()) {   // the first picture at once, as a still, while the start buffer fills
+            std::lock_guard<std::mutex> vl(pic_.m);
+            pic_.y = pics.front().y;
+            pic_.u = pics.front().u;
+            pic_.v = pics.front().v;
+            pic_.w = pics.front().w;
+            pic_.h = pics.front().h;
+            pic_.fresh = true;
+            still = true;
         }
         if (playing_ && !pics.empty()) {
             const double now = nowPts();

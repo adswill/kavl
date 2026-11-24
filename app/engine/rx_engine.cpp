@@ -181,6 +181,13 @@ int RxEngine::detect(double fs, double offset) {
             std::unique_lock<std::mutex> lk(qMtx_);
             qCv_.wait(lk, [&] { return quit_ || !q_.empty(); });
             if (quit_) return -1;
+            if (retune_.exchange(false)) {   // retuned while looking: start again on the new frequency
+                q_.clear();
+                queued_ = 0;
+                rx.clear();
+                cand.clear();
+                continue;
+            }
             while (queued_ > static_cast<long>(0.3 * fs) && q_.size() > 1) {   // keep to the newest samples while looking
                 queued_ -= static_cast<long>(q_.front().size());
                 q_.pop_front();
@@ -267,6 +274,20 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
             std::unique_lock<std::mutex> lk(qMtx_);
             qCv_.wait(lk, [&] { return quit_ || !q_.empty(); });
             if (quit_) return false;
+            if (retune_.exchange(false)) {   // retuned: what is queued is from the old frequency
+                q_.clear();
+                queued_ = 0;
+                lk.unlock();
+                lostBefore_ += demux->stats().lost;
+                rebuiltBefore_ += demux->stats().recovered;
+                if (autoProfile) return true;   // another signal may use another profile
+                rx.reset();
+                demux = std::make_unique<kavl::av::Demuxer>();
+                player_.restart();
+                bufFec = -1;
+                haveFrame = false;
+                continue;
+            }
             // nothing received lately: skip a backlog rather than search stale noise (and come back late when the signal returns)
             while (sinceFrame() > 1.5 && queued_ > static_cast<long>(0.3 * fs) && q_.size() > 1) {
                 queued_ -= static_cast<long>(q_.front().size());
@@ -320,7 +341,9 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
             if (f.hdr.fec != bufFec && f.mc) {   // packets come a protection group at a time: the player waits one group more before it starts
                 bufFec = f.hdr.fec;
                 const auto fp = kavl::fec::profile(bufFec, f.mc->blocks);
-                player_.setStartBufferMs(400.0 + (bufFec > 0 ? fp.frames * kavl::frameSeconds(vp.symRate) * 1000.0 : 0.0));
+                // a frame comes whole every frame time: wait 1.5 of them and 0.1 s (0.23 s at 1440p, 0.42 s at 720p), plus a group with protection
+                const double frameMs = kavl::frameSeconds(vp.symRate) * 1000.0;
+                player_.setStartBufferMs(100.0 + 1.5 * frameMs + (bufFec > 0 ? fp.frames * frameMs : 0.0));
             }
             demux->pushFrame(f);
         }

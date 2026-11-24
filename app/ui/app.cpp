@@ -269,7 +269,10 @@ void setRxFrequency(App& a, double hz, Tune how) {
         a.chipUntil = 0;
     }
     if (a.rx.running()) rememberRecent(a, a.freqMHz);
-    if (a.rx.running() && a.rx.source()) a.rx.source()->setFrequency(a.freqMHz * 1e6);
+    if (a.rx.running() && a.rx.source()) {
+        a.rx.source()->setFrequency(a.freqMHz * 1e6);
+        a.rx.retuned();
+    }
 }
 
 void undoTune(App& a) {
