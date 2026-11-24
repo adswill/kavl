@@ -195,6 +195,35 @@ int main() {
         std::printf("2 frames hit in one 16-frame group: %zu of 400 packets back\n", got);
         CHECK(got >= 360 && got < 400);
     }
+    // a clock packet (type 4) among video packets comes back whole, with its wall clock, and costs no other packet
+    {
+        const Modcod& mc = *modcod(kMainModcod);
+        av::Muxer mux(mc);
+        av::Demuxer dm;
+        const int64_t wall = 1795000000123LL;
+        for (int i = 0; i < 30; i++) {
+            av::Packet p;
+            p.type = av::kVideo;
+            p.ptsMs = static_cast<uint32_t>(i * 16);
+            p.data.assign(200 + static_cast<size_t>(i) * 37, static_cast<uint8_t>(i));
+            mux.push(p);
+            if (i % 10 == 0) mux.push(av::clockPacket(p.ptsMs, wall + i));
+        }
+        int seq = 0;
+        while (mux.pending()) dm.pushFrame(toFrame(mc, mux.takeFrame(true), seq++));
+        int video = 0, clocks = 0;
+        for (const auto& p : dm.take()) {
+            int64_t w = 0;
+            if (av::readClock(p, w)) {
+                CHECK(w == wall + static_cast<int64_t>(p.ptsMs / 16));
+                clocks++;
+            } else if (p.type == av::kVideo) {
+                video++;
+            }
+        }
+        std::printf("clock packets: %d of 3 back, video %d of 30, bad %ld\n", clocks, video, dm.stats().badPackets);
+        CHECK(clocks == 3 && video == 30 && dm.stats().badPackets == 0);
+    }
     if (fails) {
         std::printf("test_kavl_av: %d failures\n", fails);
         return 1;

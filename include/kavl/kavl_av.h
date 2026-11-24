@@ -5,8 +5,9 @@
 //
 // Packet: type 1 | stream 1 | flags 1 | pts (ms) 4 | length 3 | data | CRC-32 4 (over everything before it), big endian. 14 bytes of overhead.
 // Types: 1 video (one AV1 temporal unit; the encoder repeats the sequence header in every key frame, so a receiver can join at any key frame),
-//        2 audio (one Opus packet), 3 audio config (the OpusHead of the stream, sent at the start and about every second). Type 0 = padding to the end of
-//        the code word. Flags: bit 0 = key frame.
+//        2 audio (one Opus packet), 3 audio config (the OpusHead of the stream, sent at the start and about every second), 4 clock (8 bytes: the
+//        transmitter's wall clock in ms, Unix time, at the moment the video unit with this pts came out of its encoder; about every second, live only;
+//        a receiver on a clock that matches shows the delay from it). Type 0 = padding to the end of the code word. Flags: bit 0 = key frame.
 // Code word payload: a 2-byte big-endian offset of the first packet that starts in it (0xFFFF = none), then stream bytes; packets run on from code word
 // to code word. After a lost code word the receiver drops the packet in progress and resumes at the next offset.
 // With erasure protection (kavl_fec.h, the header's fec field) each group of frames ends with parity frames; the receiver rebuilds up to that
@@ -19,7 +20,7 @@
 
 namespace kavl::av {
 
-enum : uint8_t { kVideo = 1, kAudio = 2, kAudioConfig = 3 };
+enum : uint8_t { kVideo = 1, kAudio = 2, kAudioConfig = 3, kClock = 4 };
 constexpr size_t kOverhead = 14;
 constexpr size_t kMaxPacket = 4u << 20;
 
@@ -30,6 +31,9 @@ struct Packet {
     std::vector<uint8_t> data;
 };
 std::vector<uint8_t> serialize(const Packet& p);
+// A clock packet (type 4) for the pts and the wall clock (ms, Unix time); readClock is false for any other packet.
+Packet clockPacket(uint32_t ptsMs, int64_t wallMs);
+bool readClock(const Packet& p, int64_t& wallMs);
 
 class Muxer {
 public:

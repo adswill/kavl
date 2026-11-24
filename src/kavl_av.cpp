@@ -23,6 +23,22 @@ std::vector<uint8_t> serialize(const Packet& p) {
     return b;
 }
 
+Packet clockPacket(uint32_t ptsMs, int64_t wallMs) {
+    Packet p;
+    p.type = kClock;
+    p.ptsMs = ptsMs;
+    for (int i = 7; i >= 0; i--) p.data.push_back(static_cast<uint8_t>(static_cast<uint64_t>(wallMs) >> (8 * i)));
+    return p;
+}
+
+bool readClock(const Packet& p, int64_t& wallMs) {
+    if (p.type != kClock || p.data.size() < 8) return false;
+    uint64_t v = 0;
+    for (int i = 0; i < 8; i++) v = (v << 8) | p.data[static_cast<size_t>(i)];
+    wallMs = static_cast<int64_t>(v);
+    return true;
+}
+
 void Muxer::push(const Packet& p) {
     const auto b = serialize(p);
     starts_.push_back(pos_ + q_.size());
@@ -182,7 +198,7 @@ void Demuxer::parse() {
             break;
         }
         const size_t len = (static_cast<size_t>(h[7]) << 16) | (static_cast<size_t>(h[8]) << 8) | h[9];
-        if (len > kMaxPacket || h[0] > kAudioConfig) {   // not a packet header: lost sync
+        if (len > kMaxPacket || h[0] > kClock) {   // not a packet header: lost sync
             st_.badPackets++;
             sync_ = false;
             cur_.clear();
