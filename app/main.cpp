@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -160,8 +161,17 @@ int main(int argc, char** argv) {
     }
     const double t0 = glfwGetTime();
     double nextReport = 1.0;
+    double lastFrame = 0;
     while (!glfwWindowShouldClose(w)) {
-        glfwPollEvents();
+        // Draw only as often as something can change: idle (nothing received, sent or encoded), sleep until input, at least 4 times a second;
+        // running, at most 60 frames a second (the picture is never faster; a 120 Hz screen would double the drawing for nothing).
+        const bool busy = app.rx.running() || app.tx.running() || app.tx.preparing() || app.popout.isOpen() || app.txStopping || app.listingCams ||
+                          !shot.empty() || report || ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        if (busy) glfwPollEvents();
+        else glfwWaitEventsTimeout(0.25);
+        const double since = glfwGetTime() - lastFrame;
+        if (since < 1.0 / 60.0) std::this_thread::sleep_for(std::chrono::microseconds(static_cast<long long>((1.0 / 60.0 - since) * 1e6)));
+        lastFrame = glfwGetTime();
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -183,10 +193,25 @@ int main(int argc, char** argv) {
             nextReport += 1.0;
             printReport(app, glfwGetTime() - t0);
         }
+        if (report) {   // events, to the frame: lock gained or lost, the picture starting or stopping (how long a retune takes to show)
+            static bool locked = false, moving = false;
+            static long lastShown = 0;
+            static double lastMove = 0;
+            const auto st = app.rx.stats();
+            const auto ps = app.player.status();
+            const double t = glfwGetTime() - t0;
+            const bool lk = app.rx.running() && st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < 0.5;
+            if (lk != locked) std::printf("EVENT t=%.2f %s\n", t, lk ? "locked" : "lock lost"), locked = lk;
+            if (ps.shown != lastShown) lastShown = ps.shown, lastMove = t;
+            const bool mv = t - lastMove < 0.4;
+            if (mv != moving) std::printf("EVENT t=%.2f %s\n", t, mv ? "picture" : "picture stopped"), moving = mv;
+            std::fflush(stdout);
+        }
         if (runFor > 0 && glfwGetTime() - t0 > runFor) break;
         for (auto& rt : retunes)
             if (rt.first > 0 && glfwGetTime() - t0 > rt.first) {
                 setRxFrequency(app, rt.second * 1e6, Tune::Plot);   // as a click on the spectrum
+                if (report) std::printf("EVENT t=%.2f retune %.4f MHz\n", glfwGetTime() - t0, rt.second);
                 rt.first = 0;
             }
         if (gapStop > 0 && app.tx.running() && glfwGetTime() - t0 > gapStop && glfwGetTime() - t0 < gapStart) stopTxAsync(app);
