@@ -205,11 +205,11 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
     const long px = static_cast<long>(width) * height * fps;
     const char* preset = px <= 1920L * 1080 * 60 ? "7" : px <= 2560L * 1440 * 60 ? "8" : px <= 3840L * 2160 * 60 ? "10" : "11";
     args.insert(args.end(), {"-map", "0:v", "-vf", vf, "-c:v", "libsvtav1", "-preset", preset, "-b:v", bv, "-g", std::to_string(fps * 2), "-svtav1-params",
-                             "lp=6:rtc=1:rc=2", "-f", "ivf", "pipe:3"});
+                             "lp=6:rtc=1:rc=2", "-bufsize", std::to_string(std::max(1, videoKbps / 4)) + "k", "-flush_packets", "1", "-f", "ivf", "pipe:3"});
     const bool sound = camera < 0 || mic >= 0;
     if (sound) {
         args.insert(args.end(), {"-map", camera < 0 ? "1:a" : "0:a", "-c:a", "libopus", "-b:a", "112k", "-ac", "2", "-ar", "48000", "-application", "lowdelay",
-                                 "-frame_duration", "20", "-page_duration", "20000", "-f", "ogg", "pipe:4"});
+                                 "-frame_duration", "20", "-page_duration", "20000", "-flush_packets", "1", "-f", "ogg", "pipe:4"});
     }
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());
