@@ -39,7 +39,7 @@ constexpr int kHeaderCodedBits = (kHeaderInfoBits + 6) * 2;               // 140
 constexpr int kHeaderStart = kPreambleSyms;                              // symbol index of the first header symbol
 constexpr int kRegionStart = kPreambleSyms + kHeaderCodedBits;           // 204
 constexpr int kFrameSyms = kRegionStart + kRegionSyms;                   // 33618
-constexpr int kNumModcods = 10;
+constexpr int kNumModcods = 12;
 constexpr int kMainModcod = 3;                                            // NUC-256 10/15: 2.01 Mbit/s at 392 ksym/s (11/15: 19.5 dB measured, 2.22 Mbit/s)
 // Profiles (the receiver must know the symbol rate; the header carries the modcod): 1440p60 = 392 ksym/s (400 kHz), 720p60 = 196 ksym/s (200 kHz).
 constexpr double kSymRate1440 = 392000.0, kSymRate720 = 196000.0;
@@ -60,7 +60,7 @@ struct VideoProfile {
     int overheadKbps = 18;   // packet headers (14 bytes each), the sound config and the clock
     int keySec = 1;          // a key frame this often live (twice as long in an encoded file)
 };
-constexpr int kNumVideoProfiles = 12;
+constexpr int kNumVideoProfiles = 14;
 const VideoProfile& videoProfile(int i);   // 0 .. kNumVideoProfiles - 1 (clamped)
 // fecIdx: erasure protection (kavl_fec.h) takes its parity share off the budget.
 int videoKbps(const VideoProfile& p, int fecIdx = 0);

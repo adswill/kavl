@@ -21,6 +21,9 @@
 // Es/N0 a modcod needs (measured where known, else the Shannon limit of its bits per symbol + 2.5 dB)
 double thresholdDb(const kavl::Modcod* m) {
     if (!m) return 0;
+    if (m->id == 0) return 4.5;    // measured on the noise channel (test_kavl_thresholds)
+    if (m->id == 10) return 5.0;
+    if (m->id == 11) return 7.5;
     if (m->id == 2) return 13.5;
     if (m->id == 3) return 18.0;
     if (m->id == 4) return 19.5;

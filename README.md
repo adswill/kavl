@@ -38,6 +38,15 @@ Two narrow profiles go much further on little power, with NUC-64 10/15 (13.5 dB)
 
 Their frames last 1.4 s and 2.9 s on air, which sets the delay. A key frame comes every 4 s (more often would eat too much of so few bits). The receiver finds a narrow signal up to 20 kHz off its frequency, using the spectrum; picture quality at these rates is soft, best for faces and slow scenes.
 
+Two weak-signal profiles carry the same 1080p60 picture (the 1080p60 profile's video budget) on far less signal, still under 1 MHz:
+
+| Profile | Width | Signal needed | Transmit power against 1080p60, 260 kHz |
+|---|---|---|---|
+| 1080p60 weak (QPSK 11/15) | 950 kHz | 5.0 dB | about 7 dB less |
+| 1080p60 weak (NUC-16 8/15) | 650 kHz | 7.5 dB | about 6.5 dB less |
+
+Measured on a noise channel (`KAVL_MEASURE=1 build/test_kavl_thresholds`). An RTL-SDR at 2.4 Msps receives both.
+
 ## Install
 
 KAVL has no ready-made download: you build it from this source code on your own computer. It takes one command and about 10 minutes the first time.

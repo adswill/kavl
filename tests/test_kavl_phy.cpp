@@ -58,6 +58,12 @@ static void testBudgets() {
     CHECK(k24 >= 50 && k24 <= 70);
     CHECK(k12 >= 18 && k12 <= 30);
     CHECK(occupiedHz(videoProfile(10).symRate) <= 24000.5 && occupiedHz(videoProfile(11).symRate) <= 12000.5);
+    // the weak-signal 1080p60 profiles: never above 1 MHz, and at least the 1080p60 profile's video budget
+    for (int p : {12, 13}) {
+        std::printf("weak: %s %d kbit/s video, %.0f kHz\n", videoProfile(p).name, videoKbps(videoProfile(p)), occupiedHz(videoProfile(p).symRate) / 1e3);
+        CHECK(occupiedHz(videoProfile(p).symRate) <= 1e6);
+        CHECK(videoKbps(videoProfile(p)) >= videoKbps(videoProfile(2)) - 5);
+    }
 }
 
 static void testLayout() {

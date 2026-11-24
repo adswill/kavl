@@ -33,6 +33,8 @@ const std::array<Modcod, kNumModcods>& table() {
         make(3, "NUC-256 10/15", 8, 10),    make(4, "NUC-256 11/15", 8, 11),    make(5, "NUC-256 12/15", 8, 12),
         make(6, "NUC-256 13/15", 8, 13),    make(7, "NUC-1024 10/15", 10, 10),  make(8, "NUC-1024 11/15", 10, 11),
         make(9, "NUC-1024 12/15", 10, 12),
+        // weak-signal modes within the same width (owner: never above 1 MHz, even for 1080p60): 1080p60 in about 950 kHz, 650 kHz
+        make(10, "QPSK 11/15", 2, 11),      make(11, "NUC-16 8/15", 4, 8),
     };
     return t;
 }
@@ -126,6 +128,9 @@ const VideoProfile& videoProfile(int i) {
         // large share of so few bits). Frames last 1.43 s and 2.86 s on air, so the delay is a few seconds.
         {"360p30, 24 kHz", 640, 360, 30, 24000.0 / 1.02, 2, 16, 1, 60, 6, 4},
         {"360p15, 12 kHz", 640, 360, 15, 12000.0 / 1.02, 2, 12, 1, 60, 4, 4},
+        // weak signal, 1080p60 at the 1080p60 profile's video budget, never above 1 MHz (owner): QPSK 11/15 (5.0 dB measured), NUC-16 8/15 (7.5 dB)
+        {"1080p60 weak, 950 kHz", 1920, 1080, 60, 950000.0 / 1.02, 10},
+        {"1080p60 weak, 650 kHz", 1920, 1080, 60, 650000.0 / 1.02, 11},
     };
     return t[std::clamp(i, 0, kNumVideoProfiles - 1)];
 }
