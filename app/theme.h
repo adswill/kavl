@@ -42,7 +42,7 @@ inline void applyTheme() {
     s.PopupBorderSize = 1;
     s.TabBarBorderSize = 1;
     s.ScrollbarSize = 9;
-    s.GrabMinSize = 3;
+    s.GrabMinSize = 10;   // a handle, not a line through the value text
     ImVec4* c = s.Colors;
     c[ImGuiCol_WindowBg] = ImVec4(0.055f, 0.058f, 0.062f, 1);
     c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
@@ -64,8 +64,8 @@ inline void applyTheme() {
     c[ImGuiCol_TabDimmedSelected] = ImVec4(0.14f, 0.33f, 0.57f, 1);
     c[ImGuiCol_TabSelectedOverline] = ImVec4(0, 0, 0, 0);
     c[ImGuiCol_TabDimmedSelectedOverline] = ImVec4(0, 0, 0, 0);
-    c[ImGuiCol_SliderGrab] = ImVec4(0.55f, 0.58f, 0.60f, 1);
-    c[ImGuiCol_SliderGrabActive] = ImVec4(0.45f, 0.72f, 0.82f, 1);
+    c[ImGuiCol_SliderGrab] = ImVec4(0.37f, 0.38f, 0.39f, 1);   // Outline Grey: 3.2:1 on the track, the value text stays 4.3:1 over it
+    c[ImGuiCol_SliderGrabActive] = pal::accentDeep();
     c[ImGuiCol_CheckMark] = ImVec4(0.45f, 0.72f, 0.82f, 1);
     c[ImGuiCol_Separator] = ImVec4(0.20f, 0.21f, 0.22f, 1);
     c[ImGuiCol_TableRowBgAlt] = ImVec4(1, 1, 1, 0.02f);

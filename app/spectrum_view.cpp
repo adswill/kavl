@@ -45,6 +45,7 @@ SpectrumView::~SpectrumView() {
 }
 
 void SpectrumView::clear() {
+    rangeSet_ = false;
     disp_.clear();
     peakDb_.clear();
     std::fill(rows_.begin(), rows_.end(), 0xFF000000u);
@@ -75,30 +76,36 @@ void SpectrumView::save(Settings& s) const {
 }
 
 void SpectrumView::options() {
+    // the row wraps when the centre is narrow: the next item goes on this line only if it fits
+    auto flow = [](float w) {
+        const float right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+        if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + w <= right) ImGui::SameLine();
+    };
+    auto boxW = [](const char* l) { return ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::CalcTextSize(l).x; };
     ImGui::SetNextItemWidth(120);
     ImGui::SliderFloat("##avg", &avg_, 0.f, 0.95f, "Averaging %.2f");
     ImGui::SetItemTooltip("Smooths the spectrum line: 0 shows each measurement as it comes, 0.95 a long average");
-    ImGui::SameLine();
+    flow(boxW("Peak hold"));
     if (ImGui::Checkbox("Peak hold", &peak_)) peakDb_.clear();
     ImGui::SetItemTooltip("Keeps the highest level each frequency reached (a thin line); switch off and on to start again");
-    ImGui::SameLine();
+    flow(boxW("Auto range"));
     ImGui::Checkbox("Auto range", &autoRange_);
     ImGui::SetItemTooltip("The dB range follows the noise floor and the strongest signal. Off: set it with the two sliders");
     if (!autoRange_) {
-        ImGui::SameLine();
+        flow(110);
         ImGui::SetNextItemWidth(110);
         ImGui::SliderFloat("##min", &minDb_, -140.f, maxDb_ - 5.f, "Min %.0f dB");
         ImGui::SetItemTooltip("The level at the bottom of the spectrum and the darkest waterfall colour");
-        ImGui::SameLine();
+        flow(110);
         ImGui::SetNextItemWidth(110);
         ImGui::SliderFloat("##max", &maxDb_, minDb_ + 5.f, 20.f, "Max %.0f dB");
         ImGui::SetItemTooltip("The level at the top of the spectrum and the brightest waterfall colour");
     }
-    ImGui::SameLine();
+    flow(boxW("Waterfall"));
     ImGui::Checkbox("Waterfall", &waterfall);
     ImGui::SetItemTooltip("The history of the spectrum below it");
     if (lo_ > 0.f || hi_ < 1.f) {
-        ImGui::SameLine();
+        flow(ImGui::CalcTextSize("Whole span").x + 2 * ImGui::GetStyle().FramePadding.x);
         if (ImGui::SmallButton("Whole span")) lo_ = 0.f, hi_ = 1.f;
         ImGui::SetItemTooltip("Zoom out (or double-click the spectrum)");
     }
@@ -138,6 +145,11 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
         std::vector<float> sorted(disp_);
         std::nth_element(sorted.begin(), sorted.begin() + static_cast<long>(sorted.size() / 5), sorted.end());
         const float floorDb = sorted[sorted.size() / 5], top = *std::max_element(disp_.begin(), disp_.end());
+        if (!rangeSet_) {   // the first measurement sets the range: no bright rows while it would still be easing in
+            autoLo_ = floorDb - 4.f;
+            autoHi_ = std::max(top + 4.f, floorDb + 25.f);
+            rangeSet_ = true;
+        }
         autoLo_ += ((floorDb - 4.f) - autoLo_) * 0.05f;   // the noise in dark blue
         autoHi_ += (std::max(top + 4.f, floorDb + 25.f) - autoHi_) * 0.05f;
         addRow(db);

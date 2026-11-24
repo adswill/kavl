@@ -38,6 +38,7 @@ private:
     bool peak_ = false, autoRange_ = true;
     float avg_ = 0.5f, minDb_ = -100.f, maxDb_ = -30.f, split_ = 0.45f;
     float autoLo_ = -100.f, autoHi_ = -40.f;
+    bool rangeSet_ = false;
     std::vector<float> disp_, peakDb_;
     unsigned tex_ = 0;
     static constexpr int kW = 1024, kH = 256;

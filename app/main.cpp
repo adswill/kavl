@@ -162,6 +162,7 @@ struct App {
     std::vector<float> spec;
     double specFs = 0, specOff = 0;
     bool specFresh = false;
+    long specCount = -1;
     bool havePic = false;
     GLFWwindow* win = nullptr;
     int winX = 100, winY = 100, winW = 1600, winH = 950;
@@ -312,9 +313,16 @@ void uploadPicture(App& a) {
     p.fresh = false;
 }
 
+// A new spectrum only when the receiver measured one (about 30 a second): the waterfall's time axis no longer depends on the screen's refresh.
 void updateSpectrum(App& a) {
-    a.specFresh = a.rx.running() && a.rx.spectrum(a.spec, a.specFs, a.specOff);
-    if (!a.rx.running()) a.spec.clear();
+    a.specFresh = false;
+    if (!a.rx.running()) {
+        a.spec.clear();
+        return;
+    }
+    const long n = a.rx.spectrumCount();
+    if (n != a.specCount && a.rx.spectrum(a.spec, a.specFs, a.specOff)) a.specFresh = true;
+    a.specCount = n;
 }
 
 // what the chosen receive radio can tune (MHz)
@@ -649,10 +657,8 @@ void drawVideo(App& a, ImVec2 size, bool hint) {
     const float aspect = a.video.height() > 0 ? static_cast<float>(a.video.width()) / static_cast<float>(a.video.height()) : 16.f / 9.f;
     const float vw = std::min(size.x, size.y * aspect), vh = vw / aspect;
     const ImVec2 q0(p0.x + (size.x - vw) * 0.5f, p0.y + (size.y - vh) * 0.5f);
-    const auto ps = a.player.status();
     const bool showing = a.havePic && a.rx.running();
     if (showing) dl->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(a.video.texture())), q0, ImVec2(q0.x + vw, q0.y + vh));
-    (void)ps;
     ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("##video", size);
     const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
@@ -703,9 +709,7 @@ void radioSettings(App& a) {
     if (a.srcKind == 0) {
         ImGui::TextDisabled("File");
         ImGui::TextWrapped("%s", a.iqPath.empty() ? "(none)" : std::filesystem::path(a.iqPath).filename().string().c_str());
-        if (run) ImGui::BeginDisabled();
-        if (ImGui::Button("Open IQ file...", ImVec2(-1, 0))) a.chooser.open(1, "Choose a KAVL IQ .wav", false);
-        if (run) ImGui::EndDisabled();
+        if (!run && ImGui::Button("Open IQ file...", ImVec2(-1, 0))) a.chooser.open(1, "Choose a KAVL IQ .wav", false);
         return;
     }
     // the frequency and the gains follow at once while receiving; the device choice waits for a stop
@@ -737,12 +741,11 @@ void radioSettings(App& a) {
         }
     };
     if (a.srcKind == 3) {
-        ImGui::TextDisabled("From this Mac's transmitter (Send to: Loopback)");
+        if (!run) ImGui::TextDisabled("From this Mac's transmitter (Send to: Loopback)");
         freqInput();
         return;
     }
-    if (run) ImGui::BeginDisabled();
-    if (a.srcKind == 1) {
+    if (!run && a.srcKind == 1) {   // the device choice: only while stopped
         ImGui::Checkbox("Remote rtl_tcp server", &a.rtl.remote);
         if (a.rtl.remote) {
             ImGui::SetNextItemWidth(-60);
@@ -760,7 +763,7 @@ void radioSettings(App& a) {
             ImGui::SetItemTooltip("Look for radios again");
             if (findRtlTcp().empty()) ImGui::TextColored(pal::warnAmber(), "rtl_tcp missing: brew install librtlsdr");
         }
-    } else {
+    } else if (!run) {
         ImGui::SetNextItemWidth(-70);
         if (a.hrfDevs.empty()) ImGui::TextDisabled("No HackRF found");
         else ImGui::Combo("##hrfdev", &a.hrfDev, [](void* d, int i) { return (*static_cast<std::vector<RadioDevice>*>(d))[static_cast<size_t>(i)].label.c_str(); },
@@ -769,7 +772,6 @@ void radioSettings(App& a) {
         if (ImGui::Button("Rescan##refh", ImVec2(-1, 0))) refreshDevices(a);
         ImGui::SetItemTooltip("Look for radios again");
     }
-    if (run) ImGui::EndDisabled();
     freqInput();
     bool changed = false;
     if (a.srcKind == 1) {
@@ -817,8 +819,14 @@ void receivePanel(App& a, float w, float h) {
     ImGui::PushFont(a.bold);
     const bool rxOpen = ImGui::CollapsingHeader("Receive", ImGuiTreeNodeFlags_DefaultOpen);
     ImGui::PopFont();
+    if (rxOpen && run) {   // the choices are locked while receiving: one line says what was chosen
+        static const char* srcNames[] = {"IQ file", "RTL-SDR", "HackRF", "Loopback (this Mac's transmitter)"};
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s%s%s", srcNames[std::clamp(a.srcKind, 0, 3)], a.profile >= 0 ? ", " : "", a.profile >= 0 ? kavl::videoProfile(a.profile).name : "");
+        ImGui::PopStyleColor();
+    }
     if (rxOpen) {
-        if (run) ImGui::BeginDisabled();
+        if (!run) {
         ImGui::SetNextItemWidth(-1);
         if (ImGui::Combo("##src", &a.srcKind, "IQ file\0RTL-SDR (rtl_tcp)\0HackRF\0Loopback (this Mac's transmitter)\0") && a.srcKind > 0) refreshDevices(a);
         ImGui::SetItemTooltip("Where the signal comes from. Loopback: this Mac's own transmitter, no radio needed");
@@ -828,7 +836,7 @@ void receivePanel(App& a, float w, float h) {
                          kavl::kNumVideoProfiles + 1))
             a.profile = sel - 1;
         ImGui::SetItemTooltip("The transmission's profile. Auto finds it from the signal's width and header");
-        if (run) ImGui::EndDisabled();
+        }
         if (a.profile < 0 && run) {
             if (st.profile >= 0) ImGui::TextColored(pal::okGreen(), "Auto: %s", kavl::videoProfile(st.profile).name);
             else ImGui::TextColored(pal::warnAmber(), "Auto: looking for a signal...");
@@ -852,7 +860,7 @@ void receivePanel(App& a, float w, float h) {
                 const std::string path = dir + "/kavl_rec_" + std::to_string(static_cast<long long>(std::llround(a.freqMHz * 1e6))) + "Hz_" + name + ".wav";
                 if (!a.rx.startRecording(path)) a.rxError = "Could not start the recording";
             }
-            ImGui::SetItemTooltip("Saves what the receiver gets as an IQ .wav in Documents/KAVL");
+            ImGui::SetItemTooltip("Saves what the receiver gets as an IQ .wav in Documents/KAVL: about %.0f MB a minute", a.rx.source() ? a.rx.source()->sampleRate() * 4 * 60 / 1e6 : 0.0);
         } else {
             char lbl[64];
             std::snprintf(lbl, sizeof(lbl), "Stop recording (%.0f s, %.0f MB)", a.rx.recordedSec(), a.rx.recordedSec() * a.rx.source()->sampleRate() * 4 / 1e6);

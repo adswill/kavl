@@ -47,6 +47,10 @@ public:
     // Power spectrum of the input (dB, kSpecBins bins from -fs/2 to +fs/2), its sample rate and the offset of the signal.
     static constexpr int kSpecBins = 1024;
     bool spectrum(std::vector<float>& db, double& fs, double& offsetHz);
+    long spectrumCount() {   // how many spectra so far: a new value means a new measurement
+        std::lock_guard<std::mutex> sp(specMtx_);
+        return specCount_;
+    }
     // Recording what the receiver gets (after the shift back to the middle): a 16-bit IQ .wav at the source's rate.
     bool startRecording(const std::string& path);
     void stopRecording();

@@ -88,7 +88,8 @@ void RxEngine::onSamples(const kavl::cf* x, size_t n) {
                 for (int k = 0; k < kSpecBins; k++) {
                     const int b = (k + kSpecBins / 2) % kSpecBins;
                     const float db = 10.f * std::log10(std::norm(f[static_cast<size_t>(k)]) / kSpecBins + 1e-20f);
-                    spec_[static_cast<size_t>(b)] = spec_[static_cast<size_t>(b)] * 0.7f + db * 0.3f;
+                    // the first measurement as it is (an average starting from -120 dB would climb for a dozen spectra)
+                    spec_[static_cast<size_t>(b)] = specCount_ == 0 ? db : spec_[static_cast<size_t>(b)] * 0.7f + db * 0.3f;
                 }
                 specCount_++;
                 specBuf_.clear();
