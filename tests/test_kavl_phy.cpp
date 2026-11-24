@@ -49,14 +49,15 @@ static void testDemapExact() {
     }
 }
 
-// The 0 dB family: every profile on QPSK 6/15, never above 1 MHz, with the video budget it was sized for.
+// The profiles: each on its mode, never above 1 MHz, with about twice the first 0 dB family's video (4K60: what fits in 1 MHz).
 static void testBudgets() {
-    const int want[kNumVideoProfiles] = {25, 60, 150, 250, 400, 635};
+    const int want[kNumVideoProfiles] = {44, 110, 284, 482, 774, 1170};
+    const int mc[kNumVideoProfiles] = {12, 12, 12, 12, 0, 10};
     for (int p = 0; p < kNumVideoProfiles; p++) {
         const auto& vp = videoProfile(p);
         const int k = videoKbps(vp);
         std::printf("profile %d %-18s %4d kbit/s video, %4.0f kHz, %s\n", p, vp.name, k, occupiedHz(vp.symRate) / 1e3, modcod(vp.modcod)->name);
-        CHECK(vp.modcod == 12);
+        CHECK(vp.modcod == mc[p]);
         CHECK(occupiedHz(vp.symRate) <= 1e6 + 0.5);
         CHECK(std::abs(k - want[p]) <= want[p] / 10 + 2);
     }

@@ -119,16 +119,16 @@ const BitMaps& bitMaps(int nBits) {
 }  // namespace
 
 const VideoProfile& videoProfile(int i) {
-    // The 0 dB family (owner, 2026-11-24): every profile on QPSK 6/15 (about 1 dB measured), as narrow as its picture allows, never above 1 MHz;
-    // stereo Opus 32 kbit/s; a key frame every 2 s (4 s at 360p, where they would take too much of so few bits). The width sets the video
-    // budget (videoKbps): about 25, 60, 150, 250, 400 and 635 kbit/s.
+    // The family (owner, 2026-11-24): about twice the video of the first 0 dB family (its 241 kbit/s at 1080p60 looked too soft), each on the
+    // most robust mode that fits under 1 MHz: QPSK 6/15 (about 1 dB) up to 1080p60, QPSK 8/15 (2 dB) for 1440p60, QPSK 11/15 (about 5 dB) for
+    // 4K60. Stereo Opus 32 kbit/s; a key frame every 2 s (4 s at 360p). The width sets the video budget (videoKbps).
     static const VideoProfile t[kNumVideoProfiles] = {
-        {"360p15, 100 kHz", 640, 360, 15, 100000.0 / 1.02, 12, 32, 2, 20, 12, 4},
-        {"360p30, 150 kHz", 640, 360, 30, 150000.0 / 1.02, 12, 32, 2, 20, 12, 4},
-        {"720p60, 290 kHz", 1280, 720, 60, 290000.0 / 1.02, 12, 32, 2, 20, 18, 2},
-        {"1080p60, 440 kHz", 1920, 1080, 60, 440000.0 / 1.02, 12, 32, 2, 20, 18, 2},
-        {"1440p60, 660 kHz", 2560, 1440, 60, 660000.0 / 1.02, 12, 32, 2, 20, 18, 2},
-        {"4K60, 1 MHz", 3840, 2160, 60, 1000000.0 / 1.02, 12, 32, 2, 20, 18, 2},
+        {"360p15, 135 kHz", 640, 360, 15, 135000.0 / 1.02, 12, 32, 2, 20, 12, 4},
+        {"360p30, 230 kHz", 640, 360, 30, 230000.0 / 1.02, 12, 32, 2, 20, 12, 4},
+        {"720p60, 500 kHz", 1280, 720, 60, 500000.0 / 1.02, 12, 32, 2, 20, 18, 2},
+        {"1080p60, 800 kHz", 1920, 1080, 60, 800000.0 / 1.02, 12, 32, 2, 20, 18, 2},
+        {"1440p60, 930 kHz", 2560, 1440, 60, 930000.0 / 1.02, 0, 32, 2, 20, 18, 2},
+        {"4K60, 1 MHz", 3840, 2160, 60, 1000000.0 / 1.02, 10, 32, 2, 20, 18, 2},
     };
     return t[std::clamp(i, 0, kNumVideoProfiles - 1)];
 }

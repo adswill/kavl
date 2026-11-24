@@ -71,7 +71,7 @@ void aboutWindows(App& a) {
             ImGui::PushFont(a.big);
             ImGui::TextColored(pal::accent(), "KAVL %s", KAVL_VERSION);
             ImGui::PopFont();
-            ImGui::TextWrapped("Narrow-band digital video at about 1 dB of signal-to-noise ratio: 360p15 in 100 kHz to 4K60 in 1 MHz, with stereo sound.");
+            ImGui::TextWrapped("Narrow-band digital video on weak signals: up to 1080p60 in 800 kHz at about 1 dB, 1440p60 and 4K60 within 1 MHz, with stereo sound.");
             ImGui::Spacing();
             ImGui::TextUnformatted("Copyright (c) 2026 Kristijonas Adomaitis (adswill).");
             ImGui::TextUnformatted("All rights reserved. KAVL Source Licence: see LICENSE.");

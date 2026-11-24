@@ -1,6 +1,6 @@
 # KAVL
 
-Narrow-band digital video for radio that works at about 1 dB of signal-to-noise ratio: 360p15 in 100 kHz up to 4K60 in 1 MHz, with stereo sound.
+Narrow-band digital video for radio on very weak signals: 360p15 in 135 kHz up to 1080p60 in 800 kHz at about 1 dB of signal-to-noise ratio, 1440p60 and 4K60 within 1 MHz, with stereo sound.
 
 The KAVL app receives a KAVL signal from an RTL-SDR, a HackRF or an IQ recording and plays the picture and the sound. It also encodes a video file and transmits it with a HackRF, or writes the signal to an IQ file.
 
@@ -17,16 +17,16 @@ The KAVL app receives a KAVL signal from an RTL-SDR, a HackRF or an IQ recording
 
 ## Profiles
 
-Every profile is built to work at about **1 dB** of signal-to-noise ratio, as narrow as its picture allows and never wider than 1 MHz. All use QPSK with the rate 6/15 code. The signal needed is Es/N0, measured with 99 % of the code words intact on a noise channel (`KAVL_MEASURE=1 build/test_kavl_thresholds`); 98 % arrive at 0.5 dB.
+Every profile is as narrow as its picture allows at good quality, never wider than 1 MHz, on the most robust mode that fits. The signal needed is Es/N0, measured with 99 % of the code words intact on a noise channel (`KAVL_MEASURE=1 build/test_kavl_thresholds`); frames are found down to about -6 dB.
 
-| Profile | Width | Signal needed | Video (AV1) | Sound (Opus) |
-|---|---|---|---|---|
-| 360p15 | 100 kHz | about 1 dB | 22 kbit/s | stereo 32 kbit/s |
-| 360p30 | 150 kHz | about 1 dB | 55 kbit/s | stereo 32 kbit/s |
-| 720p60 | 290 kHz | about 1 dB | 142 kbit/s | stereo 32 kbit/s |
-| 1080p60 | 440 kHz | about 1 dB | 241 kbit/s | stereo 32 kbit/s |
-| 1440p60 | 660 kHz | about 1 dB | 387 kbit/s | stereo 32 kbit/s |
-| 4K60 | 1 MHz | about 1 dB | 612 kbit/s | stereo 32 kbit/s |
+| Profile | Width | Mode | Signal needed | Video (AV1) | Sound (Opus) |
+|---|---|---|---|---|---|
+| 360p15 | 135 kHz | QPSK 6/15 | about 1 dB | 45 kbit/s | stereo 32 kbit/s |
+| 360p30 | 230 kHz | QPSK 6/15 | about 1 dB | 108 kbit/s | stereo 32 kbit/s |
+| 720p60 | 500 kHz | QPSK 6/15 | about 1 dB | 281 kbit/s | stereo 32 kbit/s |
+| 1080p60 | 800 kHz | QPSK 6/15 | about 1 dB | 480 kbit/s | stereo 32 kbit/s |
+| 1440p60 | 930 kHz | QPSK 8/15 | about 2 dB | 772 kbit/s | stereo 32 kbit/s |
+| 4K60 | 1 MHz | QPSK 11/15 | about 5 dB | 1166 kbit/s | stereo 32 kbit/s |
 
 Live, a key frame comes every 2 s (4 s at 360p, where they would take too much of so few bits); an encoded file has them half as often. The picture is soft at these rates, most of all with fast motion and fine texture; faces and slow scenes hold up well. The video budget is what the width leaves after the sound, the packet overhead and 10 % headroom.
 

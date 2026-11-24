@@ -5,7 +5,7 @@
 # One demo IQ .wav per KAVL video profile (kavl_avtx --profile N) from a master clip, each checked by decoding it back (kavl_decwav: the received AV1
 # and Opus must equal what was sent).
 #   kavl/video/make_demos.sh <master clip> <start s> <out dir> <kavl build dir>
-# One encode per profile of the 0 dB family at its video budget (kavl_avtx lists them): SVT-AV1 preset 2 (4K: preset 5), key frame every 4 s,
+# One encode per profile at its video budget (kavl_avtx lists them): SVT-AV1 preset 2 (4K: preset 5), key frame every 4 s,
 # VBR; Opus 32 kbit/s stereo.
 set -euo pipefail
 SRC=$1; SS=$2; OUT=$3; B=$4
@@ -36,16 +36,16 @@ print(f"  video {len(b)}/{len(a)} frames, {'bit-identical' if a == b else 'DIFFE
 EOF
 }
 L="scale=%s:flags=lanczos,fps=60,format=yuv420p"
-enc v360p15 30 "scale=640:360:flags=lanczos,fps=15,format=yuv420p" 15 2 24
-enc v360p30 30 "scale=640:360:flags=lanczos,fps=30,format=yuv420p" 30 2 58
-enc v720 30 "$(printf "$L" 1280:720)" 60 2 149
-enc v1080 30 "$(printf "$L" 1920:1080)" 60 2 251
-enc v1440 30 "$(printf "$L" 2560:1440)" 60 2 402
-enc v2160 15 "$(printf "$L" 3840:2160)" 60 5 636
-air 0 v360p15 360p15_100kHz
-air 1 v360p30 360p30_150kHz
-air 2 v720 720p60_290kHz
-air 3 v1080 1080p60_440kHz
-air 4 v1440 1440p60_660kHz
+enc v360p15 30 "scale=640:360:flags=lanczos,fps=15,format=yuv420p" 15 2 45
+enc v360p30 30 "scale=640:360:flags=lanczos,fps=30,format=yuv420p" 30 2 108
+enc v720 30 "$(printf "$L" 1280:720)" 60 2 281
+enc v1080 30 "$(printf "$L" 1920:1080)" 60 2 480
+enc v1440 30 "$(printf "$L" 2560:1440)" 60 2 772
+enc v2160 15 "$(printf "$L" 3840:2160)" 60 5 1166
+air 0 v360p15 360p15_135kHz
+air 1 v360p30 360p30_230kHz
+air 2 v720 720p60_500kHz
+air 3 v1080 1080p60_800kHz
+air 4 v1440 1440p60_930kHz
 air 5 v2160 4K60_1MHz
 rm -f "$OUT/rx.ivf" "$OUT/rx.ogg"

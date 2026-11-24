@@ -371,8 +371,8 @@ void startRx(App& a) {
     a.rxError.clear();
     clampRx(a);
     rememberRecent(a, a.freqMHz);
-    // the width only places the radio's DC spike: with Auto, that of the 1080p60 profile (440 kHz)
-    const double width = a.profile >= 0 ? kavl::occupiedHz(kavl::videoProfile(a.profile).symRate) : 440e3;
+    // the width only places the radio's DC spike: with Auto, that of the 1080p60 profile (800 kHz)
+    const double width = a.profile >= 0 ? kavl::occupiedHz(kavl::videoProfile(a.profile).symRate) : 800e3;
     std::unique_ptr<IqSource> src;
     if (a.srcKind == 0) {
         if (a.iqPath.empty()) {
