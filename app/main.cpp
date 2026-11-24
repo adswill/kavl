@@ -542,6 +542,12 @@ void receivePanel(App& a, float leftW, float contentH) {
     std::snprintf(lbl, sizeof(lbl), locked ? "%+.1f dB margin" : "margin -", margin);
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, margin < 1 ? pal::badRed() : margin < 3 ? pal::warnAmber() : pal::okGreen());
     ImGui::ProgressBar(locked ? static_cast<float>(std::clamp(margin / 10.0, 0.0, 1.0)) : 0.f, ImVec2(-1, 0), lbl);
+    if (locked && margin < 0) {
+        ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
+        ImGui::TextWrapped("Signal too poor for this profile. A transmitter close by often overloads: lower the TX gain, turn its amplifier off and lower "
+                           "the gain here. Or use the profile's robust form (needs about 5 dB less).");
+        ImGui::PopStyleColor();
+    }
     ImGui::PopStyleColor();
     drawConstellation(a.rx.constellation(), std::min(leftW - 18, 200.f));
     valueRow(a, "Mode", "%s", st.mc ? st.mc->name : "-");
