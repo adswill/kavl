@@ -51,7 +51,11 @@ if(KAVL_BUILD_APP)
   set(IMGUI ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
   set(FONTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/Inter-Regular.ttf ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/Inter-SemiBold.ttf
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/JetBrainsMono-Regular.ttf)
-  add_executable(kavl MACOSX_BUNDLE app/main.cpp app/player.cpp app/video_gl.cpp app/rx_engine.cpp app/tx_engine.cpp app/sources.cpp app/settings.cpp app/live_feed.cpp app/loopback.cpp app/spectrum_view.cpp app/video_popout.cpp app/callsign.cpp
+  add_executable(kavl MACOSX_BUNDLE app/main.cpp
+    app/engine/player.cpp app/engine/rx_engine.cpp app/engine/tx_engine.cpp app/engine/sources.cpp app/engine/settings.cpp app/engine/live_feed.cpp
+    app/engine/loopback.cpp app/engine/callsign.cpp
+    app/ui/app.cpp app/ui/widgets.cpp app/ui/picture.cpp app/ui/receive_panel.cpp app/ui/transmit_panel.cpp app/ui/callsign_editor.cpp app/ui/station.cpp
+    app/ui/spectrum_view.cpp app/ui/video_gl.cpp app/ui/video_popout.cpp
     ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/backends/imgui_impl_glfw.cpp ${IMGUI}/backends/imgui_impl_opengl3.cpp ${FONTS})
   set_source_files_properties(${FONTS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -63,7 +67,7 @@ if(KAVL_BUILD_APP)
   if(KAVL_BUNDLE)
     add_custom_target(kavl_bundle ALL COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_app.sh $<TARGET_BUNDLE_DIR:kavl> DEPENDS kavl VERBATIM)
   endif()
-  target_include_directories(kavl PRIVATE app ${IMGUI} third_party/miniaudio)
+  target_include_directories(kavl PRIVATE app app/engine app/ui ${IMGUI} third_party/miniaudio)
   target_compile_definitions(kavl PRIVATE KAVL_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts" KAVL_VERSION="${PROJECT_VERSION}"
     GL_SILENCE_DEPRECATION)
   target_link_libraries(kavl PRIVATE kavlcore PkgConfig::GLFW PkgConfig::DAV1D PkgConfig::OPUS PkgConfig::HACKRF PkgConfig::LIBUSB
