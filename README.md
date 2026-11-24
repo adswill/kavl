@@ -61,35 +61,46 @@ Each app build then copies `ffmpeg`, `ffprobe` and every library into KAVL.app a
 
 ## Use
 
+One screen holds the whole station: **Receive** on the left, the received picture with the spectrum and waterfall in the middle, **Transmit** on the right, and a status line at the bottom (receiver, transmitter, delay, decoder speed). Each section folds away; View > Receive column / Transmit column (Cmd+1, Cmd+2) hides a whole column.
+
 **Receive**
 
-1. Choose the source: IQ file, RTL-SDR or HackRF.
-2. Leave the profile on Auto: the app finds the profile of the signal in about a second. Or choose it.
+1. Choose the source: IQ file, RTL-SDR, HackRF, or Loopback (this Mac's own transmitter, no radio needed).
+2. Leave the profile on Auto: the app reads the signal's width off the spectrum and finds the profile in about a second. Or choose it.
 3. For a radio, set the frequency and the gain. For a file, open it or drop it on the window; a frequency in the file name (`..._433000000Hz.wav`) is read.
-4. Press Start.
+4. Press Start receiving.
 
-The picture plays after the first key frame and two seconds of buffer. Record IQ saves what the receiver gets as an IQ `.wav` in Documents/KAVL. The left panel shows the lock, the link margin above the profile's threshold, the constellation, the signal-to-noise ratio, the frequency and clock offsets and the code words received.
+The frequency, the gains, the amplifier, the bias tee and the ppm correction change at once while receiving. When the transmission stops and comes back (even with another profile, on Auto), the receiver picks it up by itself, with no need to stop and start. Record IQ saves what the receiver gets as an IQ `.wav` in Documents/KAVL. The Receive column shows the lock, the link margin above the profile's threshold, the constellation, the signal-to-noise ratio, the frequency and clock offsets, the code words received, and the delay.
+
+**Low delay.** The picture starts 0.4 s after the first key frame and is then kept as close to the arrivals as they allow. Live from the camera's encoder to the screen measures about 0.75 s at 1440p60 (0.9 s at 720p, whose frames last longer). Protection adds one group of frames, because a group must arrive whole before it can be rebuilt: about 1.4 s for 1 in 16 at 1440p, 3.4 s at 720p. The transmitter sends its clock once a second, so a receiver on the same Mac (or on Macs with synced clocks) shows the delay.
+
+**Spectrum and waterfall**
+
+- Click: tune there. Drag: pan. Mouse wheel: zoom. Double-click: the whole span again.
+- Drag the shaded band (the profile's width) to retune. A red dashed line marks this Mac's transmitter.
+- Options above the plot: averaging, peak hold, automatic or set dB range, waterfall on or off. Drag the line between spectrum and waterfall to share the height.
+- Hover for the frequency and level under the mouse.
 
 | Key | Action |
 |---|---|
 | F or double-click the picture | Picture only |
+| P, or Own window on the picture | The picture in a window of its own (there: F or double-click for full screen, Esc to close) |
 | Esc | Back |
 | F11 | Full screen |
+| Cmd+1, Cmd+2 | Hide or show the Receive, the Transmit column |
 | Cmd+O | Open an IQ file |
 
 **Transmit**
 
 1. Choose the programme:
    - **Video file**: drop it on the window or choose one, then press Encode for the profile.
-   - **Camera (live)**: a camera and a microphone, encoded while transmitting. macOS asks once for access.
+   - **Camera (live)**: a camera and a microphone, encoded while transmitting. They are kept by name; the Mac's own camera and microphone are chosen unless you pick others. macOS asks once for access.
    - **Test pattern (live)**: a moving pattern and a 1 kHz tone, no camera needed.
 2. Choose the profile.
 3. Choose the protection: none, 1 frame in 16 or 2 frames in 32 (6.25 % of the bits), or 1 frame in 8 (12.5 %). Any lost frame of a group is rebuilt, from a burst of interference or a fade.
-4. Choose HackRF (frequency, TX gain, amplifier) or IQ file, then start.
+4. Choose where to send: HackRF (frequency, TX gain, amplifier), IQ file, or Loopback (into this Mac's receiver). Then start.
 
-A video file repeats until you stop it. A live programme uses SVT-AV1 in real-time mode at the profile's bit rate. On an M2 Pro every profile encodes in real time, 4K120 included. The picture is softer than a slow file encode at the same bit rate. Transmit only where your licence and the band plan allow it.
-
-An RTL-SDR on the Receive tab can receive the HackRF's transmission at the same time.
+The frequency, the TX gain and the amplifier change at once while transmitting. A video file repeats until you stop it. A live programme uses SVT-AV1 in real-time mode at the profile's bit rate. On an M2 Pro every profile encodes in real time, 4K120 included. The picture is softer than a slow file encode at the same bit rate. Transmit only where your licence and the band plan allow it.
 
 ## Tools
 
