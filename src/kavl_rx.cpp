@@ -7,6 +7,8 @@
 #include "kavl/kavl_resampler.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 namespace kavl {
@@ -219,7 +221,24 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
         return std::fabs(den) > 1e-12 ? std::clamp(0.5 * (m0 - m2) / den, -0.5, 0.5) : 0.0;
     };
 
-    // 0. the frame (and the next frame's preamble) through the matched filter with the coarse offset removed; f below is the residual offset
+    // 0. A cheap look at the preamble alone before the whole frame is filtered. The differential metric's offset (f0) is rough at low SNR: about
+    //    0.035 cycles a symbol at 0 dB, more than the quarters below can take (+-0.031), so the header came out wrong on a third of the frames. A
+    //    coherent search over the known preamble (+-0.05 cycles a symbol in 1/400 steps, +-1 sample) finds it closely, and a detection whose best
+    //    coherent correlation stays low is noise: rejected here for the price of 64 symbols, not the whole frame (thousands a second at 0 dB).
+    {
+        buildLocal(static_cast<long>(std::floor(t0)) - 24, static_cast<long>(std::ceil(t0)) + kSps * kPreambleSyms + 48, f0);
+        double bestC = -1.0, bestF = 0.0, bestT = t0;
+        for (int ti = -1; ti <= 1; ti++)
+            for (int fi = -20; fi <= 20; fi++) {
+                const double ff = fi / 400.0, c = preCorr(t0 + ti, ff);
+                if (c > bestC) bestC = c, bestF = ff, bestT = t0 + ti;
+            }
+        if (bestC < 0.4) return false;   // a real preamble gives about 0.7 at 0 dB and 0.6 at -2 dB; noise about 0.13 (at most about 0.4 next to a frame)
+        const double cm = preCorr(bestT, bestF - 1 / 400.0), cp = preCorr(bestT, bestF + 1 / 400.0);
+        f0 += bestF + parabola(cm, bestC, cp) / 400.0;
+        t0 = bestT;
+    }
+    // the frame (and the next frame's preamble) through the matched filter with the offset removed; f below is the residual offset
     buildLocal(static_cast<long>(std::floor(t0)) - 16, static_cast<long>(std::ceil(t0)) + kSps * (kFrameSyms + kPreambleSyms) + 120, f0);
 
     // 1. fine carrier offset from the preamble quarters, then the start time from the coherent correlation (parabola over +-1 sample), twice
@@ -244,16 +263,31 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
     }
     if (std::norm(h) < 1e-20) return false;
 
-    // 2. header (BPSK turned by a quarter turn per symbol)
+    // 2. header (BPSK turned by a quarter turn per symbol). At 0 dB the preamble's offset is only good to about 0.0015 cycles a symbol: up to a
+    //    quarter turn by the header's end, which failed a quarter of the headers there. So when the CRC fails, the header is tried again at small
+    //    offsets around it (8 more, up to +-0.0032); the CRC, the version and a known modcod pick the right one.
     static const cf quarter[4] = {cf(1, 0), cf(0, -1), cf(-1, 0), cf(0, 1)};   // conj(j^i)
     std::vector<float> hl(kHeaderCodedBits);
+    std::vector<cf> hy(kHeaderCodedBits);
     for (int i = 0; i < kHeaderCodedBits; i++) {
         const int k = kHeaderStart + i;
-        const cf y = at(T(k)) * rot(f, k) * quarter[i % 4] / h;
-        hl[static_cast<size_t>(i)] = static_cast<float>(4.0 * y.real() / nvPre);
+        hy[static_cast<size_t>(i)] = at(T(k)) * rot(f, k) * quarter[i % 4] / h;
     }
-    const auto hb = viterbiDecode(hl);
-    if (hb.size() < static_cast<size_t>(kHeaderInfoBits) || !parseHeader(hb.data(), rf.hdr)) return false;
+    bool hdrOk = false;
+    for (int tryI = 0; tryI < 9 && !hdrOk; tryI++) {
+        const double df = (tryI == 0 ? 0 : (tryI + 1) / 2 * (tryI % 2 ? 1 : -1)) * 0.0008;
+        const int mid = kPreambleSyms / 2;   // h is the phase at the preamble's middle
+        for (int i = 0; i < kHeaderCodedBits; i++) {
+            const cf y = hy[static_cast<size_t>(i)] * rot(df, kHeaderStart + i - mid);
+            hl[static_cast<size_t>(i)] = static_cast<float>(4.0 * y.real() / nvPre);
+        }
+        const auto hb = viterbiDecode(hl);
+        if (hb.size() >= static_cast<size_t>(kHeaderInfoBits) && parseHeader(hb.data(), rf.hdr) && modcod(rf.hdr.modcod)) {
+            hdrOk = true;
+            f += df;
+        }
+    }
+    if (!hdrOk) return false;
     const Modcod* mc = modcod(rf.hdr.modcod);
     if (!mc) return false;
     rf.mc = mc;

@@ -177,6 +177,19 @@ static void testRtlLink() {
     CHECK(r3.blocksOk == r3.blocks);
 }
 
+// Weak signal: QPSK 6/15 (the 0 dB family) at 1 dB on the noise channel. Before the coherent preamble search and the header's offset retry,
+// a quarter of the frames were lost at this level (their headers failed: the preamble's offset estimate drifted by up to a quarter turn).
+static void testWeakSignal() {
+    Channel c;
+    c.esn0Db = 1.0;
+    c.cfoHz = 1234.0;
+    c.delaySamples = 0.21;
+    const auto r = runLink(12, 20, c, 4242);
+    std::printf("weak signal QPSK 6/15 at 1 dB: frames %d/%d code words %d/%d, MER %.1f dB\n", r.framesFound, r.framesSent, r.blocksOk, r.blocks, r.merDb);
+    CHECK(r.framesFound >= 19);
+    CHECK(r.blocksOk >= 19);
+}
+
 static void testNoiseOnly() {
     Rng rng(7);
     std::vector<cf> x(400000);
@@ -196,6 +209,7 @@ int main() {
     testInterleaver();
     testClean();
     testRtlLink();
+    testWeakSignal();
     testNoiseOnly();
     if (fails) {
         std::printf("test_kavl_phy: %d failures\n", fails);
