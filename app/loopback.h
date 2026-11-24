@@ -23,6 +23,7 @@ private:
     std::mutex m_;
     std::deque<kavl::cf> q_;
     double txHz_ = 0;
+    bool primed_ = false;
 };
 
 std::unique_ptr<IqSource> makeLoopbackSource(double freqHz);

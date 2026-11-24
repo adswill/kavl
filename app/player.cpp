@@ -87,6 +87,19 @@ void Player::stop() {
     ring_.clear();
 }
 
+void Player::restart() {
+    std::lock_guard<std::mutex> lk(mtx_);
+    vq_.clear();
+    aq_.clear();
+    rateWin_.clear();
+    haveLast_ = false;
+    playing_ = false;
+    haveClock_ = false;
+    epoch_++;
+    std::lock_guard<std::mutex> sl(stMtx_);
+    st_.delaySec = -1;
+}
+
 void Player::push(std::vector<kavl::av::Packet>&& packets) {
     std::lock_guard<std::mutex> lk(mtx_);
     for (auto& p : packets) {

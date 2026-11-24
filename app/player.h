@@ -31,6 +31,8 @@ public:
     void start();
     void stop();
     void push(std::vector<kavl::av::Packet>&& packets);
+    // A new transmission: drop what is queued and start the time line again at its next key frame.
+    void restart();
     void setVolume(float v) { volume_ = v; }
     // How long the first key frame waits before playing starts (default 0.4 s). With erasure protection the packets come a whole group at a
     // time: 0.4 s plus one group. Afterwards the delay is trimmed to what the arrivals need (catch-up) and grows only when packets come late.

@@ -24,11 +24,13 @@ bool RxEngine::start(std::unique_ptr<IqSource> src, int profile) {
         std::lock_guard<std::mutex> sl(sMtx_);
         st_ = Stats();
         const_.clear();
+        lostBefore_ = rebuiltBefore_ = 0;
     }
     {
         std::lock_guard<std::mutex> sp(specMtx_);
         spec_.assign(kSpecBins, -120.f);
         specBuf_.clear();
+        specCount_ = 0;
     }
     fs_ = src_->sampleRate();
     offset_ = src_->offsetHz();
@@ -88,6 +90,7 @@ void RxEngine::onSamples(const kavl::cf* x, size_t n) {
                     const float db = 10.f * std::log10(std::norm(f[static_cast<size_t>(k)]) / kSpecBins + 1e-20f);
                     spec_[static_cast<size_t>(b)] = spec_[static_cast<size_t>(b)] * 0.7f + db * 0.3f;
                 }
+                specCount_++;
                 specBuf_.clear();
                 specFill_ = every - kSpecBins;
             }
@@ -108,6 +111,32 @@ void RxEngine::onSamples(const kavl::cf* x, size_t n) {
     qCv_.notify_one();
 }
 
+double RxEngine::signalWidthHz() {
+    std::vector<float> s;
+    double fs, off;
+    {
+        std::lock_guard<std::mutex> sp(specMtx_);
+        if (specCount_ < 10) return 0;   // the average needs a moment
+        s = spec_;
+        fs = fs_;
+        off = offset_;
+    }
+    const int n = static_cast<int>(s.size());
+    std::vector<float> sorted(s);
+    std::nth_element(sorted.begin(), sorted.begin() + n / 5, sorted.end());
+    const float floorDb = sorted[static_cast<size_t>(n / 5)];
+    auto at = [&](int i) {   // 3 bins smoothed
+        auto v = [&](int k) { return s[static_cast<size_t>(std::clamp(k, 0, n - 1))]; };
+        return (v(i - 1) + v(i) + v(i + 1)) / 3.f;
+    };
+    const int c = std::clamp(n / 2 + static_cast<int>(std::lround(-off / fs * n)), 0, n - 1);   // where the signal sits
+    if (at(c) < floorDb + 8.f) return 0;
+    int l = c, r = c;
+    while (l > 0 && at(l - 1) > floorDb + 6.f) l--;
+    while (r < n - 1 && at(r + 1) > floorDb + 6.f) r++;
+    return (r - l + 1) * fs / n;
+}
+
 int RxEngine::detect(double fs, double offset) {
     // the distinct symbol rates of the profiles
     std::vector<double> rates;
@@ -115,14 +144,29 @@ int RxEngine::detect(double fs, double offset) {
         const double r = kavl::videoProfile(i).symRate;
         if (std::find(rates.begin(), rates.end(), r) == rates.end()) rates.push_back(r);
     }
+    // A header search on every rate at once is far slower than real time. The width of the signal in the spectrum names the likely rates: only
+    // the two closest run, and none while nothing stands out of the noise. After 1.5 s without a header the choice is made again.
+    std::vector<double> cand;
     std::vector<std::unique_ptr<kavl::Receiver>> rx;
-    for (double r : rates) {
-        kavl::Receiver::Options o;
-        o.symRate = r;
-        o.inRate = fs;
-        o.headerOnly = true;
-        rx.push_back(std::make_unique<kavl::Receiver>(o));
-    }
+    double candSec = 0;
+    auto choose = [&]() {
+        cand.clear();
+        rx.clear();
+        candSec = 0;
+        const double w = signalWidthHz();
+        if (w <= 0) return;
+        std::vector<double> byFit(rates);
+        std::sort(byFit.begin(), byFit.end(), [&](double a, double b) { return std::abs(kavl::occupiedHz(a) - w) < std::abs(kavl::occupiedHz(b) - w); });
+        for (double r : byFit) {
+            if (cand.size() == 2 || std::abs(kavl::occupiedHz(r) - w) > 0.3 * kavl::occupiedHz(r)) break;
+            cand.push_back(r);
+            kavl::Receiver::Options o;
+            o.symRate = r;
+            o.inRate = fs;
+            o.headerOnly = true;
+            rx.push_back(std::make_unique<kavl::Receiver>(o));
+        }
+    };
     {
         std::lock_guard<std::mutex> sl(sMtx_);
         st_.detecting = true;
@@ -136,6 +180,10 @@ int RxEngine::detect(double fs, double offset) {
             std::unique_lock<std::mutex> lk(qMtx_);
             qCv_.wait(lk, [&] { return quit_ || !q_.empty(); });
             if (quit_) return -1;
+            while (queued_ > static_cast<long>(0.3 * fs) && q_.size() > 1) {   // keep to the newest samples while looking
+                queued_ -= static_cast<long>(q_.front().size());
+                q_.pop_front();
+            }
             chunk = std::move(q_.front());
             q_.pop_front();
             queued_ -= static_cast<long>(chunk.size());
@@ -147,20 +195,25 @@ int RxEngine::detect(double fs, double offset) {
                 if ((i & 4095) == 0) ph /= std::abs(ph);
             }
         }
-        std::vector<int> found(rates.size(), -1);   // the modcod each detector saw
+        if (rx.empty() || candSec > 1.5) {
+            choose();
+            if (rx.empty()) continue;
+        }
+        candSec += static_cast<double>(chunk.size()) / fs;
+        std::vector<int> found(cand.size(), -1);   // the modcod each detector saw
         std::vector<std::thread> th;
-        for (size_t k = 0; k < rates.size(); k++)
+        for (size_t k = 0; k < cand.size(); k++)
             th.emplace_back([&, k] {
                 for (const auto& f : rx[k]->push(chunk.data(), chunk.size()))
                     if (f.mc) found[k] = f.mc->id;
             });
         for (auto& t : th) t.join();
-        for (size_t k = 0; k < rates.size(); k++) {
+        for (size_t k = 0; k < cand.size(); k++) {
             if (found[k] < 0) continue;
             int best = -1;
             for (int i = 0; i < kavl::kNumVideoProfiles; i++) {
                 const auto& vp = kavl::videoProfile(i);
-                if (vp.symRate != rates[k]) continue;
+                if (vp.symRate != cand[k]) continue;
                 if (best < 0 || vp.modcod == found[k]) best = i;   // the profile with that modcod; else any with the rate
             }
             std::lock_guard<std::mutex> sl(sMtx_);
@@ -170,32 +223,55 @@ int RxEngine::detect(double fs, double offset) {
     }
 }
 
-void RxEngine::worker(int profile, double fs, double offset) {
-    if (profile < 0) profile = detect(fs, offset);
-    if (profile < 0) return;
-    {
+// Runs until stopped. A transmission that stops and starts again is picked up by itself: after a gap of more than 1.5 s without a frame the
+// demuxer starts afresh (protection groups and frame numbers restart) and so does the player's time line; with Auto, 3 s without a frame
+// goes back to finding the profile (the next transmission may use another one).
+void RxEngine::worker(int fixedProfile, double fs, double offset) {
+    long long n0 = 0;
+    const auto wall0 = std::chrono::steady_clock::now();
+    for (;;) {
+        const int profile = fixedProfile >= 0 ? fixedProfile : detect(fs, offset);
+        if (profile < 0) return;
+        {
+            std::lock_guard<std::mutex> sl(sMtx_);
+            st_.profile = profile;
+        }
+        if (!receive(profile, fixedProfile < 0, fs, offset, n0, wall0)) return;
+        player_.restart();   // the next transmission starts a new time line
         std::lock_guard<std::mutex> sl(sMtx_);
-        st_.profile = profile;
+        st_.profile = -1;
     }
+}
+
+bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, long long& n0, std::chrono::steady_clock::time_point wall0) {
     const kavl::VideoProfile& vp = kavl::videoProfile(profile);
     kavl::Receiver::Options o;
     o.symRate = vp.symRate;
     o.inRate = fs;
     kavl::Receiver rx(o);
-    kavl::av::Demuxer demux;
+    auto demux = std::make_unique<kavl::av::Demuxer>();
     // the radios put the signal at -offset: shift it back to the middle
     const double w = 2.0 * 3.14159265358979 * offset / fs;
     const kavl::cf step(static_cast<float>(std::cos(w)), static_cast<float>(std::sin(w)));
     kavl::cf ph(1, 0);
-    long long n0 = 0;
-    const auto wall0 = std::chrono::steady_clock::now();
     int bufFec = -1;
+    using SteadyClock = std::chrono::steady_clock;
+    const auto tStart = SteadyClock::now();
+    auto lastFrame = SteadyClock::time_point();   // when the last frame came (wall clock: the queue may drop samples)
+    bool haveFrame = false;
+    auto sinceFrame = [&] { return std::chrono::duration<double>(SteadyClock::now() - (haveFrame ? lastFrame : tStart)).count(); };
     for (;;) {
         std::vector<kavl::cf> chunk;
         {
             std::unique_lock<std::mutex> lk(qMtx_);
             qCv_.wait(lk, [&] { return quit_ || !q_.empty(); });
-            if (quit_) return;
+            if (quit_) return false;
+            // nothing received lately: skip a backlog rather than search stale noise (and come back late when the signal returns)
+            while (sinceFrame() > 1.5 && queued_ > static_cast<long>(0.3 * fs) && q_.size() > 1) {
+                queued_ -= static_cast<long>(q_.front().size());
+                n0 += static_cast<long long>(q_.front().size());
+                q_.pop_front();
+            }
             chunk = std::move(q_.front());
             q_.pop_front();
             queued_ -= static_cast<long>(chunk.size());
@@ -222,21 +298,38 @@ void RxEngine::worker(int profile, double fs, double offset) {
             }
         }
         const auto frames = rx.push(chunk.data(), chunk.size());
+        if (!frames.empty()) {
+            if (haveFrame && sinceFrame() > 1.5) {   // the transmission stopped and came back: a new one
+                lostBefore_ += demux->stats().lost;
+                rebuiltBefore_ += demux->stats().recovered;
+                demux = std::make_unique<kavl::av::Demuxer>();
+                player_.restart();
+                bufFec = -1;
+                std::lock_guard<std::mutex> sl(sMtx_);
+                st_.restarts++;
+            }
+            lastFrame = SteadyClock::now();
+            haveFrame = true;
+        } else if (autoProfile && sinceFrame() > 3.0) {
+            lostBefore_ += demux->stats().lost;
+            rebuiltBefore_ += demux->stats().recovered;
+            return true;   // nothing for 3 s: find the profile again
+        }
         for (const auto& f : frames) {
             if (f.hdr.fec != bufFec && f.mc) {   // packets come a protection group at a time: the player waits one group more before it starts
                 bufFec = f.hdr.fec;
                 const auto fp = kavl::fec::profile(bufFec, f.mc->blocks);
                 player_.setStartBufferMs(400.0 + (bufFec > 0 ? fp.frames * kavl::frameSeconds(vp.symRate) * 1000.0 : 0.0));
             }
-            demux.pushFrame(f);
+            demux->pushFrame(f);
         }
-        player_.push(demux.take());
+        player_.push(demux->take());
         std::lock_guard<std::mutex> sl(sMtx_);
         st_.streamSec = t;
         const double wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - wall0).count();
         if (wall > 1.0) st_.speed = t / wall;
-        st_.lost = demux.stats().lost;
-        st_.rebuilt = demux.stats().recovered;
+        st_.lost = lostBefore_ + demux->stats().lost;
+        st_.rebuilt = rebuiltBefore_ + demux->stats().recovered;
         for (const auto& f : frames) {
             int ok = 0;
             for (const auto& b : f.blocks) ok += b.ok ? 1 : 0;

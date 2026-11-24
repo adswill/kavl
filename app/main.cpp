@@ -6,7 +6,8 @@
 //   Transmit: a video file -> AV1 + Opus for a profile (ffmpeg) -> KAVL signal -> HackRF or IQ .wav.
 // Options: --file IQ.wav (start receiving it), --profile N, --tab rx|tx, --mute, --hidden, --shot OUT.png [--shot-after S] (a picture of the
 // window after S seconds, then quit). Checks without radios: --loopback (test pattern sent to this Mac's receiver), --fec N, --report (a status
-// line every second on stdout), --run-for S (quit after S seconds).
+// line every second on stdout), --run-for S (quit after S seconds), --tx-gap A:B[:P] (the transmitter stops at A s and starts again at B s, with
+// profile P).
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
@@ -922,8 +923,8 @@ void printReport(App& a, double t) {
     const auto st = a.rx.stats();
     const auto ps = a.player.status();
     const auto ts = a.tx.status();
-    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f snd=%ld | tx frames=%ld underruns=%ld\n", t, st.frames,
-                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ps.audioPackets, ts.frames, ts.underruns);
+    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f snd=%ld restarts=%ld dropped=%.1f | tx frames=%ld underruns=%ld\n", t, st.frames,
+                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ps.audioPackets, st.restarts, st.droppedSec, ts.frames, ts.underruns);
     std::fflush(stdout);
 }
 
@@ -950,7 +951,8 @@ int main(int argc, char** argv) {
     double shotAfter = 8.0;
     bool hidden = false, mute = false, loopback = false, report = false;
     int profile = -1, tab = -1, fecArg = -1;
-    double runFor = 0;
+    double runFor = 0, gapStop = 0, gapStart = 0;
+    int gapProfile = -1;   // --tx-gap A:B[:P]: the loopback transmitter stops at A s and starts again at B s (with profile P)
     for (int i = 1; i < argc; i++) {
         const std::string k = argv[i];
         auto val = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -965,6 +967,7 @@ int main(int argc, char** argv) {
         else if (k == "--fec") fecArg = std::clamp(std::atoi(val().c_str()), 0, kavl::fec::kNumProfiles - 1);
         else if (k == "--report") report = true;
         else if (k == "--run-for") runFor = std::atof(val().c_str());
+        else if (k == "--tx-gap") std::sscanf(val().c_str(), "%lf:%lf:%d", &gapStop, &gapStart, &gapProfile);
     }
     if (!glfwInit()) return 1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -1049,6 +1052,12 @@ int main(int argc, char** argv) {
             printReport(app, glfwGetTime() - t0);
         }
         if (runFor > 0 && glfwGetTime() - t0 > runFor) break;
+        if (gapStop > 0 && app.tx.running() && glfwGetTime() - t0 > gapStop && glfwGetTime() - t0 < gapStart) app.tx.stop();
+        if (gapStart > 0 && !app.tx.running() && glfwGetTime() - t0 > gapStart) {
+            if (gapProfile >= 0) app.txProfile = gapProfile;
+            startTx(app);
+            gapStart = 0;
+        }
         if (!shot.empty() && glfwGetTime() - t0 > shotAfter) {
             writeShot(w, shot);
             break;

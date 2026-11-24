@@ -10,6 +10,7 @@
 #include "kavl/kavl_rx.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
@@ -39,6 +40,7 @@ public:
         double streamSec = 0, lastFrameSec = -1, droppedSec = 0, speed = 0;
         const kavl::Modcod* mc = nullptr;
         int lastOk = 0, lastBlocks = 0;
+        long restarts = 0;         // transmissions that stopped and came back
     };
     Stats stats();
     std::vector<kavl::cf> constellation();
@@ -54,8 +56,12 @@ public:
 
 private:
     void onSamples(const kavl::cf* x, size_t n);
-    void worker(int profile, double fs, double offset);
+    void worker(int fixedProfile, double fs, double offset);
+    // one profile until stopped (false) or, with autoProfile, until nothing came for 3 s (true)
+    bool receive(int profile, bool autoProfile, double fs, double offset, long long& n0, std::chrono::steady_clock::time_point wall0);
+    long lostBefore_ = 0, rebuiltBefore_ = 0;   // of the demuxers before the current one
     int detect(double fs, double offset);   // the profile of the signal, -1 when stopped first
+    double signalWidthHz();                 // the width of what stands out of the noise where the signal should be (spectrum), 0 if nothing
 
     Player& player_;
     std::unique_ptr<IqSource> src_;
@@ -77,4 +83,5 @@ private:
     std::atomic<long long> recSamples_{0};
     std::vector<kavl::cf> specBuf_;
     double specFill_ = 0;
+    long specCount_ = 0;
 };

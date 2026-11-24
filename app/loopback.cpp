@@ -26,6 +26,10 @@ void LoopbackBus::push(const kavl::cf* x, size_t n, double txHz) {
 
 size_t LoopbackBus::pull(kavl::cf* out, size_t n, double& txHz) {
     std::lock_guard<std::mutex> lk(m_);
+    // the two sides tick on their own: keep 30 ms in hand, so a late tick of the transmitter does not leave a hole in the signal
+    if (q_.empty()) primed_ = false;
+    if (!primed_ && q_.size() < 3 * n) return 0;
+    primed_ = true;
     const size_t k = std::min(n, q_.size());
     std::copy(q_.begin(), q_.begin() + static_cast<long>(k), out);
     q_.erase(q_.begin(), q_.begin() + static_cast<long>(k));
