@@ -37,6 +37,8 @@ public:
     struct Status {
         long videoUnits = 0, audioPackets = 0;
         double fps = 0, kbps = 0;
+        int captureW = 0, captureH = 0;   // the camera mode in use (0 for the test pattern)
+        double captureFps = 0;
     };
     Status status();
 
@@ -45,7 +47,7 @@ private:
     void readAudio(int fd);
     std::atomic<bool> running_{false};
     int pid_ = 0;
-    std::thread vth_, ath_;
+    std::thread vth_, ath_, eth_;
     std::mutex m_;
     std::deque<kavl::av::Packet> v_, a_;
     std::vector<uint8_t> head_;

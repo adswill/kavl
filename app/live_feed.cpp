@@ -12,6 +12,8 @@
 #include <regex>
 #include <signal.h>
 #include <fcntl.h>
+#include <sstream>
+#include <cmath>
 #include <mach-o/dyld.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -64,6 +66,55 @@ bool hasSequenceHeader(const std::vector<uint8_t>& d) {   // a key frame: the en
     return false;
 }
 
+struct Mode {
+    int w = 0, h = 0;
+    double fps = 0;
+};
+
+// The capture modes a camera offers. AVFoundation refuses a frame rate the camera does not have; asking for an impossible one makes ffmpeg list them.
+std::vector<Mode> cameraModes(const std::string& ff, int camera) {
+    std::vector<Mode> modes;
+    const std::string cmd = "'" + ff + "' -hide_banner -nostdin -f avfoundation -framerate 9999 -i '" + std::to_string(camera) + ":none' -t 0 -f null - 2>&1";
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return modes;
+    char line[512];
+    static const std::regex re("([0-9]+)x([0-9]+)@\\[([0-9. ]+)\\]fps");
+    while (std::fgets(line, sizeof(line), p)) {
+        std::string l(line);
+        std::smatch m;
+        if (!std::regex_search(l, m, re)) continue;
+        std::istringstream rates(m[3].str());
+        double r;
+        while (rates >> r) modes.push_back({std::stoi(m[1].str()), std::stoi(m[2].str()), r});
+    }
+    pclose(p);
+    return modes;
+}
+
+// the capture mode for a picture of w x h at fps: the highest frame rate up to fps, then the smallest size that covers the picture (else the largest)
+bool pickMode(const std::vector<Mode>& modes, int w, int h, int fps, Mode& out) {
+    if (modes.empty()) return false;
+    double best = -1;
+    for (const auto& m : modes)
+        if (m.fps <= fps + 0.01 && m.fps > best) best = m.fps;
+    if (best < 0) {   // every rate is above the wanted one: the lowest
+        best = 1e9;
+        for (const auto& m : modes) best = std::min(best, m.fps);
+    }
+    const Mode* cover = nullptr;
+    const Mode* largest = nullptr;
+    for (const auto& m : modes) {
+        if (std::abs(m.fps - best) > 0.01 || m.w <= m.h) continue;   // landscape modes only (not square or portrait)
+        const long a = static_cast<long>(m.w) * m.h;
+        if (!largest || a > static_cast<long>(largest->w) * largest->h) largest = &m;
+        if (m.w >= w && m.h >= h && (!cover || a < static_cast<long>(cover->w) * cover->h)) cover = &m;
+    }
+    const Mode* pick = cover ? cover : largest;
+    if (!pick) return false;
+    out = *pick;
+    return true;
+}
+
 }  // namespace
 
 void listCaptureDevices(std::vector<CaptureDevice>& cameras, std::vector<CaptureDevice>& microphones) {
@@ -113,13 +164,27 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
         err_ = "ffmpeg was not found (it comes inside KAVL.app; for a build from source run tools/build_ffmpeg.sh, or brew install ffmpeg)";
         return false;
     }
-    int vp[2], ap[2];
-    if (pipe(vp) != 0 || pipe(ap) != 0) return false;
-    // move every end above fd 10, so the child's dup2 onto 3 and 4 cannot collide with an end it still has to close
-    for (int* p : {&vp[0], &vp[1], &ap[0], &ap[1]}) {
+    int vp[2], ap[2], ep[2];
+    if (pipe(vp) != 0 || pipe(ap) != 0 || pipe(ep) != 0) return false;
+    // move every end above fd 10, so the child's dup2 onto 2, 3 and 4 cannot collide with an end it still has to close
+    for (int* p : {&vp[0], &vp[1], &ap[0], &ap[1], &ep[0], &ep[1]}) {
         const int hi = fcntl(*p, F_DUPFD_CLOEXEC, 10);
         close(*p);
         *p = hi;
+    }
+    Mode cam;
+    if (camera >= 0) {
+        if (!pickMode(cameraModes(ff, camera), width, height, fps, cam)) {
+            close(vp[0]), close(vp[1]), close(ap[0]), close(ap[1]), close(ep[0]), close(ep[1]);
+            std::lock_guard<std::mutex> lk(m_);
+            err_ = "The camera did not answer (is it in use, or has KAVL no camera access? System Settings, Privacy & Security, Camera)";
+            return false;
+        }
+        fps = std::max(1, static_cast<int>(std::lround(cam.fps)));   // send what the camera gives: a 30 fps camera makes a 30 fps programme
+    }
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        st_.captureW = cam.w, st_.captureH = cam.h, st_.captureFps = cam.fps;
     }
     char vf[256];
     std::snprintf(vf, sizeof(vf), "scale=%d:%d:force_original_aspect_ratio=decrease:flags=bicubic,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,fps=%d,format=yuv420p", width,
@@ -129,7 +194,9 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
         args.insert(args.end(), {"-re", "-f", "lavfi", "-i", "testsrc2=size=" + std::to_string(width) + "x" + std::to_string(height) + ":rate=" + std::to_string(fps),
                                  "-re", "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000"});
     } else {
-        args.insert(args.end(), {"-f", "avfoundation", "-framerate", std::to_string(fps > 30 ? fps : 30), "-i",
+        char rate[32];
+        std::snprintf(rate, sizeof(rate), "%.6f", cam.fps);
+        args.insert(args.end(), {"-f", "avfoundation", "-framerate", rate, "-video_size", std::to_string(cam.w) + "x" + std::to_string(cam.h), "-i",
                                  std::to_string(camera) + ":" + (mic >= 0 ? std::to_string(mic) : std::string("none"))});
     }
     const std::string bv = std::to_string(videoKbps) + "k";
@@ -151,14 +218,17 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_adddup2(&fa, vp[1], 3);
     posix_spawn_file_actions_adddup2(&fa, ap[1], 4);
+    posix_spawn_file_actions_adddup2(&fa, ep[1], 2);   // ffmpeg's errors, shown in the window
     pid_t pid = 0;
     const int rc = posix_spawn(&pid, ff.c_str(), &fa, nullptr, argv.data(), environ);
     posix_spawn_file_actions_destroy(&fa);
     close(vp[1]);
     close(ap[1]);
+    close(ep[1]);
     if (rc != 0) {
         close(vp[0]);
         close(ap[0]);
+        close(ep[0]);
         std::lock_guard<std::mutex> lk(m_);
         err_ = "ffmpeg did not start";
         return false;
@@ -166,6 +236,23 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
     pid_ = pid;
     running_ = true;
     vth_ = std::thread([this, fd = vp[0]] { readVideo(fd); });
+    eth_ = std::thread([this, fd = ep[0]] {   // keep the last error line
+        std::string acc;
+        char b[512];
+        ssize_t k;
+        while ((k = read(fd, b, sizeof(b))) > 0) {
+            acc.append(b, static_cast<size_t>(k));
+            size_t nl;
+            while ((nl = acc.find('\n')) != std::string::npos) {
+                std::string l = acc.substr(0, nl);
+                acc.erase(0, nl + 1);
+                if (l.empty() || l.rfind("Svt[", 0) == 0) continue;
+                std::lock_guard<std::mutex> lk(m_);
+                err_ = l;
+            }
+        }
+        close(fd);
+    });
     ath_ = std::thread([this, fd = ap[0], sound] {
         if (sound) readAudio(fd);
         close(fd);
@@ -185,6 +272,7 @@ void LiveFeed::stop() {
     }
     if (vth_.joinable()) vth_.join();
     if (ath_.joinable()) ath_.join();
+    if (eth_.joinable()) eth_.join();
     running_ = false;
 }
 

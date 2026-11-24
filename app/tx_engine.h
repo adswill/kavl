@@ -43,6 +43,7 @@ public:
     bool startLive(const Dest& d, int profile, int fecIdx, int camera, int mic, int fps);
     bool live() const { return live_; }
     LiveFeed::Status liveStatus() { return feed_.status(); }
+    std::string liveError() { return feed_.error(); }
     void stop();
     bool running() const { return running_; }
     struct Status {

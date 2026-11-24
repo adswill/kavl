@@ -706,6 +706,9 @@ void transmitPage(App& a, float h) {
         if (a.tx.live()) {
             const auto ls = a.tx.liveStatus();
             valueRow(a, "Live encoder", "%.1f fps, %.2f Mbit/s, %ld sound packets", ls.fps, ls.kbps / 1e3, ls.audioPackets);
+            if (ls.captureW) valueRow(a, "Camera", "%dx%d at %.0f fps", ls.captureW, ls.captureH, ls.captureFps);
+            const std::string le = a.tx.liveError();
+            if (!le.empty() && ls.videoUnits == 0) ImGui::TextColored(pal::warnAmber(), "ffmpeg: %s", le.c_str());   // notices are harmless once video flows
         }
     }
     ImGui::Spacing();
