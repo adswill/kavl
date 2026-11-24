@@ -498,8 +498,8 @@ bool actionButton(App& a, const char* label, Action kind, bool enabled = true) {
     }
     const bool primary = kind == Action::Primary;
     ImGui::PushStyleColor(ImGuiCol_Button, primary ? pal::accent() : pal::badRed());
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? pal::accentHover() : ImVec4(0.93f, 0.47f, 0.43f, 1));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? pal::accentActive() : ImVec4(0.80f, 0.31f, 0.28f, 1));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? pal::accentHover() : pal::onAirHover());
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? pal::accentActive() : pal::onAirPressed());
     ImGui::PushStyleColor(ImGuiCol_Text, pal::onColour());
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
     ImGui::PushFont(a.bold);
@@ -725,7 +725,9 @@ void radioSettings(App& a) {
     auto freqInput = [&]() {
         ImGui::SetNextItemWidth(-72);
         const double shown = a.freqMHz;
-        if (ImGui::InputDouble("##freq", &a.freqMHz, 0.1, 1.0, "%.4f MHz")) {
+        // a narrow column drops the last digit rather than clip the unit
+        const char* ffmt = ImGui::GetContentRegionAvail().x - 72 < 150 ? "%.3f MHz" : "%.4f MHz";
+        if (ImGui::InputDouble("##freq", &a.freqMHz, 0.1, 1.0, ffmt)) {
             const double typed = a.freqMHz;
             a.freqMHz = shown;
             setRxFrequency(a, typed * 1e6, Tune::Typed);

@@ -11,6 +11,8 @@ inline ImVec4 accent(float a = 1.f) { return ImVec4(0.45f, 0.72f, 0.82f, a); }  
 inline ImVec4 accentHover() { return ImVec4(0.557f, 0.796f, 0.878f, 1); }               // #8ecbe0
 inline ImVec4 accentActive() { return ImVec4(0.373f, 0.624f, 0.722f, 1); }              // #5f9fb8
 inline ImVec4 accentDeep() { return ImVec4(0.30f, 0.46f, 0.55f, 1); }                   // Signal Teal Deep: pressed headers and buttons
+inline ImVec4 onAirHover() { return ImVec4(0.929f, 0.471f, 0.431f, 1); }               // #ed786e: Transmit Red hovered (dark label 6.9:1)
+inline ImVec4 onAirPressed() { return ImVec4(0.831f, 0.333f, 0.298f, 1); }             // #d4554c: pressed, still 4.75:1 for the dark label
 inline ImVec4 onColour() { return ImVec4(0.055f, 0.058f, 0.062f, 1); }                  // Bench Black: text on Signal Teal (8.7:1) and Transmit Red (5.5:1)
 inline ImVec4 pictureBlack() { return ImVec4(0, 0, 0, 1); }
 inline ImVec4 okGreen() { return ImVec4(0.40f, 0.76f, 0.52f, 1); }
