@@ -223,7 +223,7 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
     // the waterfall (the part of the texture on show)
     if (waterfall && wfH > 1) {
         if (tex_) dl->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(tex_)), ImVec2(plotX0, wfY0), ImVec2(s1.x, wfY0 + wfH), ImVec2(lo_, 0), ImVec2(hi_, 1));
-        else dl->AddRectFilled(ImVec2(plotX0, wfY0), ImVec2(s1.x, wfY0 + wfH), IM_COL32(0, 0, 0, 255));
+        else dl->AddRectFilled(ImVec2(plotX0, wfY0), ImVec2(s1.x, wfY0 + wfH), ImGui::GetColorU32(pal::pictureBlack()));
         if (have && in.bandHalfHz > 0) {   // the band's edges on the waterfall too
             const double c = in.rxHz + (bandDrag_ ? bandShiftHz_ : 0.0);
             for (double e : {c - in.bandHalfHz, c + in.bandHalfHz}) {

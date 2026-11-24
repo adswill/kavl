@@ -358,6 +358,50 @@ void valueRow(App& a, const char* label, const char* fmt, ...) {
     ImGui::PopFont();
 }
 
+// The action buttons: primary (Start: Signal Teal, dark bold label) and on-air (Stop transmitting / recording: Transmit Red, dark bold label).
+// Taller than the other controls, so the actions that start or stop something are the first thing found. A disabled primary falls back to the
+// plain button, so a greyed teal never looks like an available action.
+enum class Action { Primary, OnAir };
+bool actionButton(App& a, const char* label, Action kind, bool enabled = true) {
+    const ImVec2 size(-1, ImGui::GetFrameHeight() + 8);
+    if (!enabled) {
+        ImGui::BeginDisabled();
+        ImGui::Button(label, size);
+        ImGui::EndDisabled();
+        return false;
+    }
+    const bool primary = kind == Action::Primary;
+    ImGui::PushStyleColor(ImGuiCol_Button, primary ? pal::accent() : pal::badRed());
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, primary ? pal::accentHover() : ImVec4(0.93f, 0.47f, 0.43f, 1));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, primary ? pal::accentActive() : ImVec4(0.80f, 0.31f, 0.28f, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text, pal::onColour());
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0, 0, 0, 0));
+    ImGui::PushFont(a.bold);
+    const bool pressed = ImGui::Button(label, size);
+    ImGui::PopFont();
+    ImGui::PopStyleColor(5);
+    return pressed;
+}
+
+// The studio light: a solid Transmit Red band while a HackRF is on the air; a quiet band for the loopback and for writing a file (not on the air).
+void onAirBand(App& a) {
+    if (!a.tx.running()) return;
+    const bool onAir = a.txDest == 0;
+    char t[64];
+    if (a.txDest == 1) std::snprintf(t, sizeof(t), "WRITING IQ FILE");
+    else std::snprintf(t, sizeof(t), "%s  \xC2\xB7  %.4f MHz", onAir ? "ON AIR" : "LOOPBACK", a.txFreqMHz);
+    auto* dl = ImGui::GetWindowDrawList();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const float w = ImGui::GetContentRegionAvail().x, h = onAir ? 36.f : 26.f;
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), ImGui::GetColorU32(onAir ? pal::badRed() : ImGui::GetStyleColorVec4(ImGuiCol_Header)), 3.f);
+    ImGui::PushFont(onAir ? a.big : a.bold);
+    const ImVec2 ts = ImGui::CalcTextSize(t);
+    dl->AddText(ImVec2(p0.x + (w - ts.x) * 0.5f, p0.y + (h - ts.y) * 0.5f), ImGui::GetColorU32(onAir ? pal::onColour() : pal::accent()), t);
+    ImGui::PopFont();
+    ImGui::Dummy(ImVec2(w, h));
+    if (onAir) ImGui::SetItemTooltip("This Mac's HackRF is transmitting on %.4f MHz", a.txFreqMHz);
+}
+
 void drawConstellation(const std::vector<kavl::cf>& pts, float size) {
     const ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + size, p0.y + size);
     auto* dl = ImGui::GetWindowDrawList();
@@ -378,7 +422,7 @@ void drawConstellation(const std::vector<kavl::cf>& pts, float size) {
 void drawVideo(App& a, ImVec2 size, bool hint) {
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     auto* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(p0, ImVec2(p0.x + size.x, p0.y + size.y), IM_COL32(0, 0, 0, 255));
+    dl->AddRectFilled(p0, ImVec2(p0.x + size.x, p0.y + size.y), ImGui::GetColorU32(pal::pictureBlack()));
     const float aspect = a.video.height() > 0 ? static_cast<float>(a.video.width()) / static_cast<float>(a.video.height()) : 16.f / 9.f;
     const float vw = std::min(size.x, size.y * aspect), vh = vw / aspect;
     const ImVec2 q0(p0.x + (size.x - vw) * 0.5f, p0.y + (size.y - vh) * 0.5f);
@@ -538,12 +582,10 @@ void receivePanel(App& a, float w, float h) {
         }
         radioSettings(a);
         if (!run) {
-            if (ImGui::Button("Start receiving", ImVec2(-1, 0))) startRx(a);
+            if (actionButton(a, "Start receiving", Action::Primary)) startRx(a);
             ImGui::SetItemTooltip("Opens the radio (or the file) and looks for a KAVL signal");
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.46f, 0.55f, 1));
-            if (ImGui::Button("Stop receiving", ImVec2(-1, 0))) a.rx.stop();
-            ImGui::PopStyleColor();
+            if (ImGui::Button("Stop receiving", ImVec2(-1, ImGui::GetFrameHeight() + 8))) a.rx.stop();   // not a status: the plain button
         }
         if (run) {   // recording what the receiver gets, for a later look (the frequency goes into the file name)
         if (!a.rx.recording()) {
@@ -559,11 +601,9 @@ void receivePanel(App& a, float w, float h) {
             }
             ImGui::SetItemTooltip("Saves what the receiver gets as an IQ .wav in Documents/KAVL");
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, pal::badRed());
             char lbl[64];
             std::snprintf(lbl, sizeof(lbl), "Stop recording (%.0f s, %.0f MB)", a.rx.recordedSec(), a.rx.recordedSec() * a.rx.source()->sampleRate() * 4 / 1e6);
-            if (ImGui::Button(lbl, ImVec2(-1, 0))) a.rx.stopRecording();
-            ImGui::PopStyleColor();
+            if (actionButton(a, lbl, Action::OnAir)) a.rx.stopRecording();
         }
         if (!a.rx.recordingPath().empty() && !a.rx.recording()) {
             if (ImGui::SmallButton("Show the recording in Finder")) {
@@ -644,6 +684,7 @@ void transmitPanel(App& a, float w, float h) {
     ImGui::BeginChild("##right", ImVec2(w, h), ImGuiChildFlags_Borders);
     const bool txBusy = a.tx.preparing() || a.tx.running();
     const bool txRun = a.tx.running();
+    onAirBand(a);
     ImGui::PushFont(a.bold);
     const bool open = ImGui::CollapsingHeader("Transmit", ImGuiTreeNodeFlags_DefaultOpen);
     ImGui::PopFont();
@@ -753,15 +794,15 @@ void transmitPanel(App& a, float w, float h) {
         const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
         const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty());
         if (!txRun) {
-            if (!canStart) ImGui::BeginDisabled();
-            if (ImGui::Button(a.txDest != 1 ? "Start transmitting" : "Write the IQ file", ImVec2(-1, 0))) startTx(a);
-            if (!canStart) ImGui::EndDisabled();
+            if (actionButton(a, a.txDest != 1 ? "Start transmitting" : "Write the IQ file", Action::Primary, canStart)) startTx(a);
             if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec))
                 ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
         } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, pal::badRed());
-            if (ImGui::Button("Stop transmitting", ImVec2(-1, 0))) a.tx.stop();
-            ImGui::PopStyleColor();
+            if (a.txDest == 0) {   // on the air: the red stop
+                if (actionButton(a, "Stop transmitting", Action::OnAir)) a.tx.stop();
+            } else if (ImGui::Button(a.txDest == 1 ? "Stop writing" : "Stop sending", ImVec2(-1, ImGui::GetFrameHeight() + 8))) {
+                a.tx.stop();   // loopback and file are not on the air: the plain button
+            }
         }
     }
     const auto ts = a.tx.status();
@@ -813,7 +854,19 @@ void statusBar(App& a) {
              prof >= 0 ? (std::string("  ") + kavl::videoProfile(prof).name).c_str() : "");
     }
     if (!a.tx.running()) part(pal::grey(), "TX off");
-    else part(pal::badRed(), "TX %s %.4f MHz%s", a.txDest == 1 ? "file" : a.txDest == 2 ? "loopback" : "on air", a.txFreqMHz, a.tx.live() ? "  live" : "");
+    else if (a.txDest == 0) {   // on the air: a solid red pill, the status line's ON AIR light
+        char t[64];
+        std::snprintf(t, sizeof(t), "ON AIR  %.4f MHz%s", a.txFreqMHz, a.tx.live() ? "  live" : "");
+        ImGui::PushFont(a.bold);
+        const ImVec2 ts = ImGui::CalcTextSize(t), p = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y - 1), ImVec2(p.x + ts.x + 16, p.y + ts.y + 1), ImGui::GetColorU32(pal::badRed()), 3.f);
+        ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + 8, p.y), ImGui::GetColorU32(pal::onColour()), t);
+        ImGui::PopFont();
+        ImGui::Dummy(ImVec2(ts.x + 16, ts.y));
+        ImGui::SameLine(0, 24);
+    } else {
+        part(pal::accent(), "TX %s %.4f MHz%s", a.txDest == 1 ? "writing a file" : "loopback", a.txFreqMHz, a.tx.live() ? "  live" : "");
+    }
     if (ps.delaySec >= 0) part(pal::accent(), "Delay %.2f s", ps.delaySec);
     if (a.rx.running() && st.speed > 0) part(st.speed < 1.0 ? pal::badRed() : pal::grey(), "Decoder %.2fx", st.speed);
     ImGui::NewLine();

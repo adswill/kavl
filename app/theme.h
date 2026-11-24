@@ -7,12 +7,17 @@
 #include "imgui.h"
 
 namespace pal {
-inline ImVec4 accent(float a = 1.f) { return ImVec4(0.45f, 0.72f, 0.82f, a); }
+inline ImVec4 accent(float a = 1.f) { return ImVec4(0.45f, 0.72f, 0.82f, a); }   // Signal Teal, the one accent
+inline ImVec4 accentHover() { return ImVec4(0.557f, 0.796f, 0.878f, 1); }               // #8ecbe0
+inline ImVec4 accentActive() { return ImVec4(0.373f, 0.624f, 0.722f, 1); }              // #5f9fb8
+inline ImVec4 accentDeep() { return ImVec4(0.30f, 0.46f, 0.55f, 1); }                   // Signal Teal Deep: pressed headers and buttons
+inline ImVec4 onColour() { return ImVec4(0.055f, 0.058f, 0.062f, 1); }                  // Bench Black: text on Signal Teal (8.7:1) and Transmit Red (5.5:1)
+inline ImVec4 pictureBlack() { return ImVec4(0, 0, 0, 1); }
 inline ImVec4 okGreen() { return ImVec4(0.40f, 0.76f, 0.52f, 1); }
 inline ImVec4 warnAmber() { return ImVec4(0.90f, 0.70f, 0.28f, 1); }
 inline ImVec4 badRed() { return ImVec4(0.88f, 0.38f, 0.34f, 1); }
 inline ImVec4 grey(float a = 1.f) { return ImVec4(0.58f, 0.60f, 0.62f, a); }
-inline ImVec4 heading() { return ImVec4(0.45f, 0.75f, 1, 1); }
+inline ImVec4 heading() { return accent(); }   // the One Accent rule: headings in Signal Teal
 inline ImVec4 plotBg() { return ImVec4(0.02f, 0.021f, 0.023f, 1); }
 inline ImVec4 plotBorder() { return ImVec4(0.24f, 0.25f, 0.26f, 1); }
 inline ImVec4 plotGrid() { return ImVec4(0.60f, 0.62f, 0.64f, 0.16f); }
@@ -48,10 +53,10 @@ inline void applyTheme() {
     c[ImGuiCol_FrameBgActive] = ImVec4(0.14f, 0.145f, 0.15f, 1);
     c[ImGuiCol_Button] = ImVec4(0.10f, 0.105f, 0.11f, 1);
     c[ImGuiCol_ButtonHovered] = ImVec4(0.17f, 0.18f, 0.19f, 1);
-    c[ImGuiCol_ButtonActive] = ImVec4(0.30f, 0.46f, 0.55f, 1);
+    c[ImGuiCol_ButtonActive] = pal::accentDeep();
     c[ImGuiCol_Header] = ImVec4(0.13f, 0.14f, 0.15f, 1);
     c[ImGuiCol_HeaderHovered] = ImVec4(0.17f, 0.18f, 0.19f, 1);
-    c[ImGuiCol_HeaderActive] = ImVec4(0.30f, 0.46f, 0.55f, 1);
+    c[ImGuiCol_HeaderActive] = pal::accentDeep();
     c[ImGuiCol_Tab] = ImVec4(0.055f, 0.058f, 0.062f, 1);
     c[ImGuiCol_TabHovered] = ImVec4(1, 1, 1, 0.10f);
     c[ImGuiCol_TabSelected] = ImVec4(0.15f, 0.38f, 0.66f, 1);
