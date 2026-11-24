@@ -19,6 +19,7 @@
 #include "player.h"
 #include "rx_engine.h"
 #include "settings.h"
+#include "spectrum_view.h"
 #include "theme.h"
 #include "live_feed.h"
 #include "loopback.h"
@@ -101,12 +102,6 @@ struct FileChooser {
     }
 };
 
-uint32_t wfColour(float v) {
-    v = std::clamp(v, 0.f, 1.f);
-    const float r = std::clamp(2.6f * v - 1.6f, 0.f, 1.f), g = std::clamp(1.6f * v - 0.35f, 0.f, 1.f), b = std::clamp(0.10f + 1.3f * v, 0.f, 1.f);
-    return 0xFF000000u | (static_cast<uint32_t>(b * 255) << 16) | (static_cast<uint32_t>(g * 255) << 8) | static_cast<uint32_t>(r * 255);
-}
-
 std::string resourceDir() {
     // inside KAVL.app: Contents/MacOS/kavl -> Contents/Resources; else the fonts of the source tree
     char buf[4096];
@@ -150,13 +145,11 @@ struct App {
     double txFreqMHz = 433.0;
     bool txAmp = false;
     // view
-    bool videoOnly = false, fullscreen = false, showWaterfall = true, showAbout = false, showLicences = false;
-    unsigned wfTex = 0;
-    static constexpr int kWfW = RxEngine::kSpecBins, kWfH = 256;
-    std::vector<uint32_t> wf = std::vector<uint32_t>(static_cast<size_t>(kWfW) * kWfH, 0xFF000000u);
+    bool videoOnly = false, fullscreen = false, showAbout = false, showLicences = false;
+    SpectrumView specView;
     std::vector<float> spec;
     double specFs = 0, specOff = 0;
-    float dbLo = -100.f, dbHi = -40.f;
+    bool specFresh = false;
     bool havePic = false;
     GLFWwindow* win = nullptr;
     int winX = 100, winY = 100, winW = 1600, winH = 950;
@@ -193,7 +186,7 @@ void loadSettings(App& a) {
     a.liveFps = static_cast<int>(c.num("tx.liveFps", 0));
     a.cameraName = c.str("tx.cameraName");
     a.microphoneName = c.str("tx.microphoneName");
-    a.showWaterfall = c.flag("view.waterfall", true);
+    a.specView.load(c);
 }
 
 void saveSettings(App& a) {
@@ -228,7 +221,7 @@ void saveSettings(App& a) {
     }
     c.set("tx.cameraName", a.cameraName);
     c.set("tx.microphoneName", a.microphoneName);
-    c.set("view.waterfall", a.showWaterfall);
+    a.specView.save(c);
     c.save();
 }
 
@@ -264,26 +257,14 @@ void uploadPicture(App& a) {
     p.fresh = false;
 }
 
-void updateWaterfall(App& a) {
-    if (!a.rx.running() || !a.rx.spectrum(a.spec, a.specFs, a.specOff)) return;
-    std::vector<float> sorted(a.spec);
-    std::nth_element(sorted.begin(), sorted.begin() + static_cast<long>(sorted.size() / 5), sorted.end());
-    const float floorDb = sorted[sorted.size() / 5];
-    const float peak = *std::max_element(a.spec.begin(), a.spec.end());
-    a.dbLo += ((floorDb - 8.f) - a.dbLo) * 0.05f;
-    a.dbHi += (std::max(peak + 4.f, floorDb + 25.f) - a.dbHi) * 0.05f;
-    std::memmove(a.wf.data() + App::kWfW, a.wf.data(), sizeof(uint32_t) * App::kWfW * (App::kWfH - 1));
-    for (int x = 0; x < App::kWfW; x++) a.wf[static_cast<size_t>(x)] = wfColour((a.spec[static_cast<size_t>(x)] - a.dbLo) / (a.dbHi - a.dbLo));
-    if (!a.wfTex) {
-        glGenTextures(1, &a.wfTex);
-        glBindTexture(GL_TEXTURE_2D, a.wfTex);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, App::kWfW, App::kWfH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    }
-    glBindTexture(GL_TEXTURE_2D, a.wfTex);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, App::kWfW, App::kWfH, GL_RGBA, GL_UNSIGNED_BYTE, a.wf.data());
+void updateSpectrum(App& a) {
+    a.specFresh = a.rx.running() && a.rx.spectrum(a.spec, a.specFs, a.specOff);
+    if (!a.rx.running()) a.spec.clear();
+}
+
+void setRxFrequency(App& a, double hz) {
+    a.freqMHz = hz / 1e6;
+    if (a.rx.running() && a.rx.source()) a.rx.source()->setFrequency(hz);
 }
 
 void startRx(App& a) {
@@ -319,7 +300,7 @@ void startRx(App& a) {
     }
     if (!a.rx.start(std::move(src), a.profile)) a.rxError = a.rx.error();
     a.havePic = false;
-    std::fill(a.wf.begin(), a.wf.end(), 0xFF000000u);
+    a.specView.clear();
 }
 
 void startTx(App& a) {
@@ -411,33 +392,17 @@ void drawVideo(App& a, ImVec2 size, bool hint) {
 }
 
 void drawSpectrum(App& a, ImVec2 size) {
-    const ImVec2 p0 = ImGui::GetCursorScreenPos();
-    auto* dl = ImGui::GetWindowDrawList();
-    const float specH = a.showWaterfall ? size.y * 0.42f : size.y;
-    const ImVec2 s1(p0.x + size.x, p0.y + specH);
-    dl->AddRectFilled(p0, s1, ImGui::GetColorU32(pal::plotBg()));
-    dl->AddRect(p0, s1, ImGui::GetColorU32(pal::plotBorder()));
-    for (int g = 1; g < 6; g++) dl->AddLine(ImVec2(p0.x, p0.y + specH * g / 6.f), ImVec2(s1.x, p0.y + specH * g / 6.f), ImGui::GetColorU32(pal::plotGrid()));
-    if (!a.spec.empty() && a.specFs > 0) {
-        const int shown = a.profile >= 0 ? a.profile : a.rx.stats().profile;
-        const double half = shown >= 0 ? kavl::occupiedHz(kavl::videoProfile(shown).symRate) / 2.0 : 0.0;
-        auto xOf = [&](double hz) { return p0.x + static_cast<float>((hz / a.specFs + 0.5) * size.x); };
-        dl->AddRectFilled(ImVec2(xOf(-a.specOff - half), p0.y), ImVec2(xOf(-a.specOff + half), s1.y), ImGui::GetColorU32(pal::accent(0.10f)));
-        std::vector<ImVec2> line(a.spec.size());
-        for (size_t i = 0; i < a.spec.size(); i++) {
-            const float v = std::clamp((a.spec[i] - a.dbLo) / (a.dbHi - a.dbLo), 0.f, 1.f);
-            line[i] = ImVec2(p0.x + size.x * static_cast<float>(i) / static_cast<float>(a.spec.size() - 1), s1.y - v * specH);
-        }
-        dl->AddPolyline(line.data(), static_cast<int>(line.size()), ImGui::GetColorU32(pal::accent()), 0, 1.2f);
-        char lbl[64];
-        std::snprintf(lbl, sizeof(lbl), "%.3f MHz   span %.2f MHz", a.freqMHz, a.specFs / 1e6);
-        dl->AddText(ImVec2(p0.x + 6, p0.y + 4), ImGui::GetColorU32(pal::grey()), lbl);
-    }
-    if (a.showWaterfall) {
-        if (a.wfTex) dl->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(a.wfTex)), ImVec2(p0.x, s1.y + 2), ImVec2(s1.x, p0.y + size.y));
-        else dl->AddRectFilled(ImVec2(p0.x, s1.y + 2), ImVec2(s1.x, p0.y + size.y), IM_COL32(0, 0, 0, 255));
-    }
-    ImGui::Dummy(size);
+    SpectrumView::Input in;
+    in.db = &a.spec;
+    in.fs = a.specFs;
+    in.rxHz = a.freqMHz * 1e6;
+    in.radioHz = in.rxHz + a.specOff;
+    in.fresh = a.specFresh;
+    const int shown = a.profile >= 0 ? a.profile : a.rx.stats().profile;
+    in.bandHalfHz = shown >= 0 ? kavl::occupiedHz(kavl::videoProfile(shown).symRate) / 2.0 : 0.0;
+    if (a.tx.running() && a.txDest != 1) in.txHz = a.txFreqMHz * 1e6;
+    double hz = 0;
+    if (a.specView.draw(in, size, a.mono, hz)) setRxFrequency(a, hz);
 }
 
 // ---- receive --------------------------------------------------------------------------------------------------------------------------------------------
@@ -840,7 +805,7 @@ void frame(App& a) {
     if (a.chooser.poll(2, picked)) a.videoPath = picked;
     if (a.chooser.poll(3, picked)) a.txFilePath = picked;
     uploadPicture(a);
-    updateWaterfall(a);
+    updateSpectrum(a);
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->Pos);
@@ -873,7 +838,7 @@ void frame(App& a) {
         if (ImGui::BeginMenu("View")) {
             if (ImGui::MenuItem("Video only", "F", a.videoOnly)) a.videoOnly = !a.videoOnly;
             if (ImGui::MenuItem("Full screen", "F11", a.fullscreen)) a.fullscreen = !a.fullscreen, glfwPostEmptyEvent();
-            ImGui::MenuItem("Waterfall", nullptr, &a.showWaterfall);
+            ImGui::MenuItem("Waterfall", nullptr, &a.specView.waterfall);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Radio")) {
@@ -930,10 +895,12 @@ void frame(App& a) {
         ImGui::SameLine();
         ImGui::BeginChild("##main", ImVec2(0, h));
         const ImVec2 av = ImGui::GetContentRegionAvail();
-        const float specH = std::clamp(av.y * (a.showWaterfall ? 0.28f : 0.14f), 90.f, 300.f);
-        drawVideo(a, ImVec2(av.x, av.y - specH - 6), true);
+        const float specH = std::clamp(av.y * (a.specView.waterfall ? 0.34f : 0.18f), 120.f, 420.f);
+        const float rowH = ImGui::GetFrameHeightWithSpacing();
+        drawVideo(a, ImVec2(av.x, av.y - specH - rowH - 6), true);
         ImGui::Dummy(ImVec2(0, 2));
-        drawSpectrum(a, ImVec2(av.x, specH));
+        a.specView.options();
+        drawSpectrum(a, ImVec2(av.x, ImGui::GetContentRegionAvail().y));
         ImGui::EndChild();
     } else {
         transmitPage(a, h);
@@ -1101,7 +1068,6 @@ int main(int argc, char** argv) {
     app.rx.stop();
     app.tx.stop();
     if (shot.empty() && !hidden) saveSettings(app);
-    if (app.wfTex) glDeleteTextures(1, &app.wfTex);
     app.video.release();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
