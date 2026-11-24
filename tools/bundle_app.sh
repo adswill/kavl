@@ -9,8 +9,9 @@ FF="$ROOT/build-ffmpeg/out/bin"
 MAC="$APP/Contents/MacOS"
 FW="$APP/Contents/Frameworks"
 # nothing changed since the last bundle (the app binary as signed then, ffmpeg, the licence texts): done (saves a second on every build)
-STAMP="$APP/Contents/.bundle-stamp"
-key() { stat -f "%m:%z" "$MAC/KAVL" "$FF/ffmpeg" "$ROOT/LICENSE" "$ROOT/THIRD_PARTY.md" 2>/dev/null | tr '\n' ' '; }
+STAMP="$APP.bundle-stamp"   # beside the app, not in it: a file added after signing breaks the signature's seal
+# (stat fails on a file that is not there, such as ffmpeg when it is not bundled: that must not stop the script)
+key() { { stat -f "%m:%z" "$MAC/KAVL" "$FF/ffmpeg" "$ROOT/LICENSE" "$ROOT/THIRD_PARTY.md" 2>/dev/null || true; } | tr '\n' ' '; }
 if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$(key)" ]; then
   echo "bundle up to date"
   exit 0

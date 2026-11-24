@@ -14,6 +14,7 @@ echo "== build"
 nice -n 19 cmake --build build -j3 > build/check-build.log 2>&1 || { grep -E "error:" -A3 build/check-build.log | head -30; echo "BUILD FAILED"; exit 1; }
 echo "== tests"
 (cd build && ctest -E thresholds -j4 --output-on-failure | tail -3) || { echo "TESTS FAILED"; exit 1; }
+[ ! -d build/KAVL.app ] || codesign -v build/KAVL.app || { echo "APP SIGNATURE BROKEN (something changed the bundle after signing)"; exit 1; }
 [ -n "${SKIP_APP:-}" ] && { echo "OK ($(( $(date +%s) - t0 )) s, app run skipped)"; exit 0; }
 echo "== app over loopback ($SECS s, profile $PROFILE)"
 # a copy named KAVLcheck (an instant APFS clone), so it never mixes with a KAVL you have open; hidden runs read and write no settings
