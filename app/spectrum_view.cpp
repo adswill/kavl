@@ -240,6 +240,7 @@ bool SpectrumView::draw(const Input& in, ImVec2 size, ImFont* small, double& tun
     const ImGuiIO& io = ImGui::GetIO();
     auto plotMouse = [&](const char* id, ImVec2 p0, ImVec2 sz, bool spectrumPart) {
         ImGui::SetCursorScreenPos(p0);
+        ImGui::SetNextItemAllowOverlap();   // a control drawn over the plot (the "Back to" chip) takes its own clicks
         ImGui::InvisibleButton(id, ImVec2(std::max(1.f, sz.x), std::max(1.f, sz.y)));
         if (!have) return;
         const float mx = io.MousePos.x;

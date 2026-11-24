@@ -125,6 +125,15 @@ struct App {
     bool showRx = true, showTx = true;   // the columns
     VideoPopout popout;
     bool wantPopout = false, hidden = false;
+    // tuning: where it was (Cmd+Z), the last frequencies used (Recent), the undo chip after a click on the spectrum, a range note
+    std::vector<double> tuneHistory, recent;   // MHz
+    double chipUntil = 0, chipFromMHz = 0, freqBeforeEdit = 0, noteUntil = 0;
+    std::string freqNote;
+    // slow work off the drawing thread: listing cameras (ffmpeg), stopping the transmitter (waits for ffmpeg and the radio)
+    std::thread camTh, txStopTh;
+    std::atomic<bool> listingCams{false}, camsReady{false}, txStopping{false};
+    std::mutex camMtx;
+    std::vector<CaptureDevice> newCams, newMics;
     // receive
     int srcKind = 0;   // 0 IQ file, 1 RTL-SDR, 2 HackRF, 3 loopback (this Mac's transmitter)
     std::string iqPath;
@@ -166,6 +175,16 @@ void loadSettings(App& a) {
     a.srcKind = std::clamp(static_cast<int>(c.num("rx.source", 0)), 0, 3);
     a.iqPath = c.str("rx.file");
     a.freqMHz = c.num("rx.freqMHz", 433.0);
+    {   // Recent: "433.0000,432.5000,..."
+        std::string s = c.str("rx.recent");
+        for (size_t i = 0; i < s.size();) {
+            const size_t j = s.find(',', i);
+            const double f = std::atof(s.substr(i, j == std::string::npos ? std::string::npos : j - i).c_str());
+            if (f > 0 && a.recent.size() < 8) a.recent.push_back(f);
+            if (j == std::string::npos) break;
+            i = j + 1;
+        }
+    }
     a.profile = std::clamp(static_cast<int>(c.num("rx.profile", -1)), -1, kavl::kNumVideoProfiles - 1);   // -1 = Auto
     a.volume = static_cast<float>(c.num("rx.volume", 1.0));
     a.rtl.remote = c.flag("rtl.remote", false);
@@ -199,6 +218,15 @@ void saveSettings(App& a) {
     c.set("rx.source", a.srcKind);
     c.set("rx.file", a.iqPath);
     c.set("rx.freqMHz", a.freqMHz);
+    {
+        std::string s;
+        char t[32];
+        for (double r : a.recent) {
+            std::snprintf(t, sizeof(t), "%s%.4f", s.empty() ? "" : ",", r);
+            s += t;
+        }
+        c.set("rx.recent", s);
+    }
     c.set("rx.profile", a.profile);
     c.set("rx.volume", static_cast<double>(a.volume));
     c.set("rtl.remote", a.rtl.remote);
@@ -242,8 +270,28 @@ int pickDevice(const std::vector<CaptureDevice>& devs, const std::string& saved,
     return 0;
 }
 
+// Asking ffmpeg for the cameras takes a moment: on a thread; the lists arrive in takeDevices().
 void listDevices(App& a) {
-    listCaptureDevices(a.cameras, a.microphones);
+    if (a.listingCams) return;
+    if (a.camTh.joinable()) a.camTh.join();
+    a.listingCams = true;
+    a.camTh = std::thread([&a] {
+        std::vector<CaptureDevice> cams, mics;
+        listCaptureDevices(cams, mics);
+        std::lock_guard<std::mutex> lk(a.camMtx);
+        a.newCams = std::move(cams);
+        a.newMics = std::move(mics);
+        a.camsReady = true;
+        a.listingCams = false;
+    });
+}
+
+void takeDevices(App& a) {
+    if (!a.camsReady) return;
+    std::lock_guard<std::mutex> lk(a.camMtx);
+    a.cameras = std::move(a.newCams);
+    a.microphones = std::move(a.newMics);
+    a.camsReady = false;
     a.devicesListed = true;
     a.camera = pickDevice(a.cameras, a.cameraName, {"FaceTime", "Built-in"});
     a.microphone = a.microphoneName == "none" ? -1 : a.microphones.empty() ? -1 : pickDevice(a.microphones, a.microphoneName, {"MacBook", "Built-in"});
@@ -269,13 +317,81 @@ void updateSpectrum(App& a) {
     if (!a.rx.running()) a.spec.clear();
 }
 
-void setRxFrequency(App& a, double hz) {
+// what the chosen receive radio can tune (MHz)
+void rxRange(const App& a, double& lo, double& hi, const char*& name) {
+    if (a.srcKind == 1) lo = 24, hi = 1766, name = "The RTL-SDR";
+    else lo = 1, hi = 6000, name = a.srcKind == 2 ? "The HackRF" : "KAVL";
+}
+
+// Keeps a.freqMHz inside the radio's range; says so when it had to move it.
+void clampRx(App& a) {
+    double lo, hi;
+    const char* name;
+    rxRange(a, lo, hi, name);
+    const double f = std::clamp(a.freqMHz, lo, hi);
+    if (f != a.freqMHz) {
+        char t[128];
+        std::snprintf(t, sizeof(t), "%s tunes %.0f to %.0f MHz: set to %.4f MHz.", name, lo, hi, f);
+        a.freqNote = t;
+        a.noteUntil = ImGui::GetTime() + 5.0;
+        a.freqMHz = f;
+    }
+}
+
+void rememberRecent(App& a, double mhz) {
+    a.recent.erase(std::remove_if(a.recent.begin(), a.recent.end(), [&](double r) { return std::abs(r - mhz) < 0.0005; }), a.recent.end());
+    a.recent.insert(a.recent.begin(), mhz);
+    if (a.recent.size() > 8) a.recent.resize(8);
+}
+
+// Every retune goes through here: clamped to the radio, the old frequency kept for Cmd+Z, the radio told at once. A click or drag on the
+// spectrum also shows "Back to ..." for 8 s (one stray click must not cost the signal).
+enum class Tune { Typed, Plot, Key, Recent, Undo };
+void setRxFrequency(App& a, double hz, Tune how) {
+    const double before = a.freqMHz;
     a.freqMHz = hz / 1e6;
-    if (a.rx.running() && a.rx.source()) a.rx.source()->setFrequency(hz);
+    clampRx(a);
+    if (std::abs(a.freqMHz - before) < 1e-7) return;
+    if (how != Tune::Undo) {
+        a.tuneHistory.push_back(before);
+        if (a.tuneHistory.size() > 32) a.tuneHistory.erase(a.tuneHistory.begin());
+    }
+    if (how == Tune::Plot) {
+        a.chipUntil = ImGui::GetTime() + 8.0;
+        a.chipFromMHz = before;
+    } else {
+        a.chipUntil = 0;
+    }
+    if (a.rx.running()) rememberRecent(a, a.freqMHz);
+    if (a.rx.running() && a.rx.source()) a.rx.source()->setFrequency(a.freqMHz * 1e6);
+}
+
+void undoTune(App& a) {
+    if (a.tuneHistory.empty()) return;
+    const double f = a.tuneHistory.back();
+    a.tuneHistory.pop_back();
+    setRxFrequency(a, f * 1e6, Tune::Undo);
+}
+
+// Stopping the transmitter waits for ffmpeg and the radio (up to 2 s): on a thread, so the window keeps drawing.
+void stopTxAsync(App& a) {
+    if (a.txStopping) return;
+    if (a.txStopTh.joinable()) a.txStopTh.join();
+    a.txStopping = true;
+    a.txStopTh = std::thread([&a] {
+        a.tx.stop();
+        a.txStopping = false;
+    });
+}
+
+void waitTxStop(App& a) {
+    if (a.txStopTh.joinable()) a.txStopTh.join();
 }
 
 void startRx(App& a) {
     a.rxError.clear();
+    clampRx(a);
+    rememberRecent(a, a.freqMHz);
     // the width only places the radio's DC spike: with Auto, that of the 400 kHz profiles
     const double width = a.profile >= 0 ? kavl::occupiedHz(kavl::videoProfile(a.profile).symRate) : 400e3;
     std::unique_ptr<IqSource> src;
@@ -422,6 +538,7 @@ void drawConstellation(const std::vector<kavl::cf>& pts, float size) {
 // Send this Mac's test pattern to its own receiver: a picture within seconds, no radio needed (the quickest way to see what KAVL does).
 void tryLoopback(App& a) {
     a.rx.stop();
+    waitTxStop(a);
     a.tx.stop();
     a.srcKind = 3;
     a.txSource = 2;
@@ -562,7 +679,21 @@ void drawSpectrum(App& a, ImVec2 size) {
     in.bandHalfHz = shown >= 0 ? kavl::occupiedHz(kavl::videoProfile(shown).symRate) / 2.0 : 0.0;
     if (a.tx.running() && a.txDest != 1) in.txHz = a.txFreqMHz * 1e6;
     double hz = 0;
-    if (a.specView.draw(in, size, a.mono, hz)) setRxFrequency(a, hz);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    if (a.specView.draw(in, size, a.mono, hz)) setRxFrequency(a, hz, Tune::Plot);
+    if (ImGui::GetTime() < a.chipUntil) {   // a click on the spectrum moved the receiver: one click back
+        const ImVec2 after = ImGui::GetCursorScreenPos();
+        char t[64];
+        std::snprintf(t, sizeof(t), "Back to %.4f MHz", a.chipFromMHz);
+        ImGui::SetCursorScreenPos(ImVec2(at.x + 46, at.y + 6));
+        if (ImGui::SmallButton(t)) {
+            a.chipUntil = 0;
+            undoTune(a);
+        }
+        ImGui::SetItemTooltip("Undo the retune (Cmd+Z)");
+        ImGui::SetCursorScreenPos(after);
+        ImGui::Dummy(ImVec2(0, 0));   // an item where the cursor was put back, so the window's bounds stay valid
+    }
 }
 
 // ---- receive --------------------------------------------------------------------------------------------------------------------------------------------
@@ -578,9 +709,31 @@ void radioSettings(App& a) {
     }
     // the frequency and the gains follow at once while receiving; the device choice waits for a stop
     auto freqInput = [&]() {
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::InputDouble("##freq", &a.freqMHz, 0.1, 1.0, "%.4f MHz") && run && a.rx.source()) a.rx.source()->setFrequency(a.freqMHz * 1e6);
-        ImGui::SetItemTooltip("Receive frequency. Changes at once while receiving; or click the spectrum.");
+        ImGui::SetNextItemWidth(-72);
+        const double shown = a.freqMHz;
+        if (ImGui::InputDouble("##freq", &a.freqMHz, 0.1, 1.0, "%.4f MHz")) {
+            const double typed = a.freqMHz;
+            a.freqMHz = shown;
+            setRxFrequency(a, typed * 1e6, Tune::Typed);
+        }
+        ImGui::SetItemTooltip("Receive frequency; changes at once while receiving. Or click the spectrum. [ and ] step 5 kHz (Shift: 50 kHz), Cmd+Z goes back.");
+        ImGui::SameLine();
+        if (ImGui::Button("Recent", ImVec2(-1, 0))) ImGui::OpenPopup("##recent");
+        ImGui::SetItemTooltip("The last frequencies received on");
+        if (ImGui::BeginPopup("##recent")) {
+            if (a.recent.empty()) ImGui::TextDisabled("Frequencies you receive on are kept here.");
+            for (double r : a.recent) {
+                char t[32];
+                std::snprintf(t, sizeof(t), "%.4f MHz", r);
+                if (ImGui::Selectable(t, std::abs(r - a.freqMHz) < 0.0005)) setRxFrequency(a, r * 1e6, Tune::Recent);
+            }
+            ImGui::EndPopup();
+        }
+        if (ImGui::GetTime() < a.noteUntil) {
+            ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
+            ImGui::TextWrapped("%s", a.freqNote.c_str());
+            ImGui::PopStyleColor();
+        }
     };
     if (a.srcKind == 3) {
         ImGui::TextDisabled("From this Mac's transmitter (Send to: Loopback)");
@@ -822,7 +975,9 @@ void transmitPanel(App& a, float w, float h) {
             if (a.txSource == 1 && !a.devicesListed) listDevices(a);
             if (txBusy) ImGui::BeginDisabled();
             if (a.txSource == 1) {
-                if (a.cameras.empty()) {
+                if (a.listingCams) {
+                    ImGui::TextDisabled("Looking for cameras...");
+                } else if (a.cameras.empty()) {
                     ImGui::TextColored(pal::warnAmber(), "No camera found. Check that a camera is connected and that KAVL may use it (System Settings, Privacy, Camera).");
                 } else {
                     ImGui::SetNextItemWidth(-1);
@@ -909,13 +1064,14 @@ void transmitPanel(App& a, float w, float h) {
         }
         const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec;
         const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
-        const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty());
+        const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty()) && !a.txStopping;
         if (!txRun) {
             if (actionButton(a, a.txDest != 1 ? "Start transmitting" : "Write the IQ file", Action::Primary, canStart)) startTx(a);
             if (!canStart) {   // say what is missing
                 const char* why = a.txSource == 0 && a.videoPath.empty()               ? "Choose a video first."
                                   : a.txSource == 0 && a.tx.preparing()                ? "Encoding the video; this starts when it is ready."
                                   : a.txSource == 0 && !fileReady                      ? "Encode the video for this profile first."
+                                  : a.txSource == 1 && a.listingCams                   ? "Looking for cameras..."
                                   : a.txSource == 1 && a.cameras.empty()               ? "No camera found."
                                   : a.txDest == 1 && a.txFilePath.empty()              ? "Choose where to save the IQ file (Save as...)."
                                                                                        : "";
@@ -924,10 +1080,14 @@ void transmitPanel(App& a, float w, float h) {
             if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec))
                 ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
         } else {
-            if (a.txDest == 0) {   // on the air: the red stop
-                if (actionButton(a, "Stop transmitting", Action::OnAir)) a.tx.stop();
+            if (a.txStopping) {   // the stop runs on a thread: say so, and take no second press
+                ImGui::BeginDisabled();
+                ImGui::Button("Stopping...", ImVec2(-1, ImGui::GetFrameHeight() + 8));
+                ImGui::EndDisabled();
+            } else if (a.txDest == 0) {   // on the air: the red stop
+                if (actionButton(a, "Stop transmitting", Action::OnAir)) stopTxAsync(a);
             } else if (ImGui::Button(a.txDest == 1 ? "Stop writing" : "Stop sending", ImVec2(-1, ImGui::GetFrameHeight() + 8))) {
-                a.tx.stop();   // loopback and file are not on the air: the plain button
+                stopTxAsync(a);   // loopback and file are not on the air: the plain button
             }
         }
     }
@@ -1057,6 +1217,7 @@ void frame(App& a) {
     if (a.chooser.poll(3, picked)) a.txFilePath = picked;
     uploadPicture(a);
     updateSpectrum(a);
+    takeDevices(a);
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->Pos);
@@ -1127,6 +1288,11 @@ void frame(App& a) {
         if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_O)) a.chooser.open(1, "Choose a KAVL IQ .wav", false);
         if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_1)) a.showRx = !a.showRx;
         if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_2)) a.showTx = !a.showTx;
+        if (io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_Z, false)) undoTune(a);
+        // tuning steps on [ and ] (the arrows belong to keyboard navigation)
+        const double step = io.KeyShift ? 0.05 : 0.005;
+        if (!io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_LeftBracket)) setRxFrequency(a, (a.freqMHz - step) * 1e6, Tune::Key);
+        if (!io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_RightBracket)) setRxFrequency(a, (a.freqMHz + step) * 1e6, Tune::Key);
     }
     if (a.videoOnly) {   // the picture alone: no columns, no spectrum
         drawVideo(a, ImGui::GetContentRegionAvail(), false);
@@ -1231,6 +1397,7 @@ int main(int argc, char** argv) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.IniFilename = nullptr;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;   // Tab and the arrows move between controls, Space or Return presses
     applyTheme();
     App app;
     gApp = &app;
@@ -1312,12 +1479,11 @@ int main(int argc, char** argv) {
         if (runFor > 0 && glfwGetTime() - t0 > runFor) break;
         for (auto& rt : retunes)
             if (rt.first > 0 && glfwGetTime() - t0 > rt.first) {
-                app.freqMHz = rt.second;
-                if (app.rx.source()) app.rx.source()->setFrequency(app.freqMHz * 1e6);
+                setRxFrequency(app, rt.second * 1e6, Tune::Plot);   // as a click on the spectrum
                 rt.first = 0;
             }
-        if (gapStop > 0 && app.tx.running() && glfwGetTime() - t0 > gapStop && glfwGetTime() - t0 < gapStart) app.tx.stop();
-        if (gapStart > 0 && !app.tx.running() && glfwGetTime() - t0 > gapStart) {
+        if (gapStop > 0 && app.tx.running() && glfwGetTime() - t0 > gapStop && glfwGetTime() - t0 < gapStart) stopTxAsync(app);
+        if (gapStart > 0 && !app.tx.running() && !app.txStopping && glfwGetTime() - t0 > gapStart) {
             if (gapProfile >= 0) app.txProfile = gapProfile;
             startTx(app);
             gapStart = 0;
@@ -1330,7 +1496,9 @@ int main(int argc, char** argv) {
         glfwSwapBuffers(w);
     }
     app.rx.stop();
+    waitTxStop(app);
     app.tx.stop();
+    if (app.camTh.joinable()) app.camTh.join();
     if (shot.empty() && !hidden) saveSettings(app);
     app.video.release();
     ImGui_ImplOpenGL3_Shutdown();
