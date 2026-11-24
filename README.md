@@ -7,8 +7,7 @@ The KAVL app receives a KAVL signal from an RTL-SDR, a HackRF or an IQ recording
 ## Contents
 
 - [Profiles](#profiles)
-- [Requirements](#requirements)
-- [Build](#build)
+- [Install](#install) (Mac: from download to running, updating, problems)
 - [Use](#use)
 - [Tools](#tools)
 - [How it works](#how-it-works)
@@ -34,37 +33,96 @@ Two narrow profiles go much further on little power, with NUC-64 10/15 (13.5 dB)
 
 | Profile | Width | Signal needed | Video | Sound | Delay | Picture after tuning |
 |---|---|---|---|---|---|---|
-| 360p30 | 24 kHz | 13.5 dB | 60 kbit/s | Opus mono 16 kbit/s | about 3.3 s | about 4 s |
-| 360p15 | 12 kHz | 13.5 dB | 25 kbit/s | Opus mono 12 kbit/s | about 6.5 s | about 7 s |
+| 360p30 | 24 kHz | 13.5 dB | 60 kbit/s | Opus mono 16 kbit/s | about 3.3 s | about 5 s |
+| 360p15 | 12 kHz | 13.5 dB | 25 kbit/s | Opus mono 12 kbit/s | about 6.5 s | about 10 s |
 
 Their frames last 1.4 s and 2.9 s on air, which sets the delay. A key frame comes every 4 s (more often would eat too much of so few bits). The receiver finds a narrow signal up to 20 kHz off its frequency, using the spectrum; picture quality at these rates is soft, best for faces and slow scenes.
 
-## Requirements
+## Install
 
-macOS 12 or later (built and tested on Apple silicon).
+KAVL has no ready-made download: you build it from this source code on your own computer. It takes one command and about 10 minutes the first time.
+
+| Platform | Works? |
+|---|---|
+| Mac with Apple silicon (M1 to M4), macOS 12 or later | Yes, tested |
+| Mac with an Intel processor, macOS 12 or later | Should work, not tested |
+| Windows | Not yet |
+| Linux | Not yet |
+
+### Mac: from download to running
+
+You need an internet connection and about 3 GB of free disk space. You never need to type your password into anything except macOS's own windows and Homebrew's installer.
+
+**1. Open Terminal.** Press Cmd+Space, type `Terminal`, press Return. A window with a text prompt opens. Every command below is typed (or pasted) there and run with Return.
+
+**2. Install Homebrew** (skip if you have it; if unsure, type `brew --version`: a version number means you have it).
+Go to https://brew.sh, copy the one line under "Install Homebrew", paste it into Terminal and press Return. It asks for your Mac password (the letters do not show while you type; that is normal) and may install Apple's developer tools. At the end it prints "Next steps" with two or three commands: copy and run those too, then close Terminal and open it again.
+
+**3. Download KAVL.** Paste this and press Return:
 
 ```bash
-brew install cmake ninja glfw dav1d opus hackrf libusb svt-av1
+cd ~ && git clone https://github.com/adswill/kavl.git
 ```
 
-- RTL-SDR dongles need `rtl_tcp`: `brew install librtlsdr`.
-- KAVL.app carries its own FFmpeg (LGPL build, for encoding the video file or the camera) and all its libraries, so a built app runs on a Mac without Homebrew.
+This makes a folder `kavl` in your home folder. (If it says `git` needs the developer tools, click Install in the window that appears, wait until it finishes, then run the line again. Or download the ZIP from the green Code button on GitHub, double-click it, and rename the folder to `kavl` in your home folder.)
 
-## Build
+**4. Build and open KAVL.** Paste this and press Return:
 
 ```bash
+cd ~/kavl && tools/install_mac.sh
+```
+
+It checks Apple's developer tools and Homebrew, installs the libraries KAVL needs (only missing ones; it upgrades nothing you have), builds the app and opens it. It prints four steps, `1/4` to `4/4`, and then `Done.` in green. If it stops, it says why in red and what to do; do that and run the same line again.
+
+**5. Next time**, open KAVL by double-clicking `KAVL.app` in the `kavl/build` folder of your home folder (Finder: Go > Home), or with `open ~/kavl/build/KAVL.app`. You can drag it to the Dock to keep it there.
+
+**Check that it works** without any radio: in KAVL, set Receive > Source to **Loopback**, Transmit > Programme to **Test pattern**, Transmit > Send to **Loopback**, and press Start transmitting. A moving pattern with a tone should appear in the middle within about 2 seconds.
+
+**Radios.** Plug in an RTL-SDR or a HackRF over USB; no drivers to install on a Mac. The camera and microphone: macOS asks once whether KAVL may use them; click Allow. (Changed your mind: System Settings > Privacy & Security > Camera / Microphone.)
+
+### Mac: updating
+
+```bash
+cd ~/kavl && git pull && tools/install_mac.sh
+```
+
+Quit KAVL first. This takes seconds when little changed. (Downloaded the ZIP instead: download the new ZIP, replace the `kavl` folder, run `cd ~/kavl && tools/install_mac.sh`.)
+
+### Mac: removing
+
+Drag the `kavl` folder from your home folder to the Bin. Settings are in `~/Library/Application Support/KAVL`, recordings in `Documents/KAVL`. The Homebrew libraries can stay (or `brew uninstall` them).
+
+### Mac: when something goes wrong
+
+| What you see | What to do |
+|---|---|
+| `zsh: command not found: brew` | Homebrew's "Next steps" were skipped. Run `eval "$(/opt/homebrew/bin/brew shellenv)"` (Intel Mac: `/usr/local/bin/brew`), then the command again. |
+| `Permission denied` running `tools/install_mac.sh` | Run `chmod +x tools/install_mac.sh`, then the command again. |
+| `No such file or directory` | You are not in the kavl folder: start the line with `cd ~/kavl &&` as shown. |
+| The build failed | It printed the lines that say why, and the whole log is in `~/kavl/build/install.log`. Run `brew update && brew upgrade` and try again; if it still fails, open an issue on GitHub with that log. |
+| KAVL opens but the camera picture stays black | System Settings > Privacy & Security > Camera: turn KAVL on, then quit and open KAVL again. |
+| The RTL-SDR is not found | Unplug it and plug it in again, then press Refresh next to the source. |
+
+### Windows and Linux
+
+Not yet: the app uses macOS's camera, screen and audio frameworks, and has only been built on a Mac. Porting is planned.
+
+### Building by hand (developers)
+
+```bash
+brew install cmake ninja pkgconf glfw dav1d opus hackrf libusb svt-av1 librtlsdr ffmpeg
 cmake -S . -B build -G Ninja
 cmake --build build
 open build/KAVL.app
 ```
 
-To put FFmpeg in the app, build it once from the FFmpeg 8.0 source (https://ffmpeg.org/releases/ffmpeg-8.0.tar.xz) before building the app:
+A built app uses Homebrew's `ffmpeg` (it runs it as a separate program) and `rtl_tcp` for RTL-SDR dongles. To make an app that carries its own LGPL FFmpeg and runs on a Mac without Homebrew, build FFmpeg once from the FFmpeg 8.0 source (https://ffmpeg.org/releases/ffmpeg-8.0.tar.xz) before building the app:
 
 ```bash
 tools/build_ffmpeg.sh /path/to/ffmpeg-8.0
 ```
 
-Each app build then copies `ffmpeg`, `ffprobe` and every library into KAVL.app and signs it ad hoc (`tools/bundle_app.sh`). Without that step the app uses a Homebrew `ffmpeg`.
+Each app build then copies `ffmpeg`, `ffprobe` and every library into KAVL.app and signs it ad hoc (`tools/bundle_app.sh`).
 
 `-DKAVL_BUILD_APP=OFF` builds only the library, the tools and the tests. `-DKAVL_BUNDLE=OFF` skips the bundling.
 
