@@ -145,6 +145,7 @@ struct App {
     int camera = 0, microphone = 0, liveFps = 0;   // liveFps: 0 = 30, 1 = 60
     std::vector<CaptureDevice> cameras, microphones;
     bool devicesListed = false;
+    std::string cameraName, microphoneName;   // saved by name: the device numbers change when an iPhone or a virtual device comes and goes
     double txFreqMHz = 433.0;
     bool txAmp = false;
     // view
@@ -189,8 +190,8 @@ void loadSettings(App& a) {
     a.txFec = std::clamp(static_cast<int>(c.num("tx.fec", 0)), 0, kavl::fec::kNumProfiles - 1);
     a.txSource = std::clamp(static_cast<int>(c.num("tx.source", 0)), 0, 2);
     a.liveFps = static_cast<int>(c.num("tx.liveFps", 0));
-    a.camera = static_cast<int>(c.num("tx.camera", 0));
-    a.microphone = static_cast<int>(c.num("tx.microphone", 0));
+    a.cameraName = c.str("tx.cameraName");
+    a.microphoneName = c.str("tx.microphoneName");
     a.showWaterfall = c.flag("view.waterfall", true);
 }
 
@@ -220,10 +221,31 @@ void saveSettings(App& a) {
     c.set("tx.fec", a.txFec);
     c.set("tx.source", a.txSource);
     c.set("tx.liveFps", a.liveFps);
-    c.set("tx.camera", a.camera);
-    c.set("tx.microphone", a.microphone);
+    if (a.devicesListed) {   // else keep what was saved
+        a.cameraName = a.camera >= 0 && a.camera < static_cast<int>(a.cameras.size()) ? a.cameras[static_cast<size_t>(a.camera)].name : a.cameraName;
+        a.microphoneName = a.microphone < 0 ? "none" : a.microphone < static_cast<int>(a.microphones.size()) ? a.microphones[static_cast<size_t>(a.microphone)].name : a.microphoneName;
+    }
+    c.set("tx.cameraName", a.cameraName);
+    c.set("tx.microphoneName", a.microphoneName);
     c.set("view.waterfall", a.showWaterfall);
     c.save();
+}
+
+// the saved device by name; else the first whose name has one of the preferred words (the Mac's own camera and microphone); else the first
+int pickDevice(const std::vector<CaptureDevice>& devs, const std::string& saved, std::initializer_list<const char*> prefer) {
+    for (size_t i = 0; i < devs.size(); i++)
+        if (!saved.empty() && devs[i].name == saved) return static_cast<int>(i);
+    for (const char* w : prefer)
+        for (size_t i = 0; i < devs.size(); i++)
+            if (devs[i].name.find(w) != std::string::npos) return static_cast<int>(i);
+    return 0;
+}
+
+void listDevices(App& a) {
+    listCaptureDevices(a.cameras, a.microphones);
+    a.devicesListed = true;
+    a.camera = pickDevice(a.cameras, a.cameraName, {"FaceTime", "Built-in"});
+    a.microphone = a.microphoneName == "none" ? -1 : a.microphones.empty() ? -1 : pickDevice(a.microphones, a.microphoneName, {"MacBook", "Built-in"});
 }
 
 void refreshDevices(App& a) {
@@ -624,10 +646,7 @@ void transmitPage(App& a, float h) {
         if (ImGui::Button("Choose a video...")) a.chooser.open(2, "Choose a video to transmit", false);
         ImGui::TextUnformatted(a.videoPath.empty() ? "(no video chosen)" : a.videoPath.c_str());
     } else {
-        if (a.txSource == 1 && !a.devicesListed) {
-            listCaptureDevices(a.cameras, a.microphones);
-            a.devicesListed = true;
-        }
+        if (a.txSource == 1 && !a.devicesListed) listDevices(a);
         if (txBusy) ImGui::BeginDisabled();
         if (a.txSource == 1) {
             if (a.cameras.empty()) {
@@ -646,7 +665,11 @@ void transmitPage(App& a, float h) {
                     a.microphone = mic - 1;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Look again")) listCaptureDevices(a.cameras, a.microphones);
+            if (ImGui::Button("Look again")) {
+                if (a.camera >= 0 && a.camera < static_cast<int>(a.cameras.size())) a.cameraName = a.cameras[static_cast<size_t>(a.camera)].name;
+                a.microphoneName = a.microphone < 0 ? "none" : a.microphone < static_cast<int>(a.microphones.size()) ? a.microphones[static_cast<size_t>(a.microphone)].name : a.microphoneName;
+                listDevices(a);
+            }
         }
         ImGui::SetNextItemWidth(120);
         ImGui::Combo("Frame rate", &a.liveFps, "30 fps\0" "60 fps\0");
@@ -899,8 +922,8 @@ void printReport(App& a, double t) {
     const auto st = a.rx.stats();
     const auto ps = a.player.status();
     const auto ts = a.tx.status();
-    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f | tx frames=%ld underruns=%ld\n", t, st.frames,
-                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ts.frames, ts.underruns);
+    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f snd=%ld | tx frames=%ld underruns=%ld\n", t, st.frames,
+                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ps.audioPackets, ts.frames, ts.underruns);
     std::fflush(stdout);
 }
 
