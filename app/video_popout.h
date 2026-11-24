@@ -29,4 +29,5 @@ private:
     int x_ = 120, y_ = 120, w_ = 960, h_ = 540;
     double lastClick_ = -1;
     std::string shot_;
+    int waiting_ = -1;   // the title says so while there is no picture
 };

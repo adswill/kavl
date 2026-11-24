@@ -110,6 +110,7 @@ void VideoPopout::close() {
     glfwDestroyWindow(win_);
     win_ = nullptr;
     fullscreen_ = false;
+    waiting_ = -1;
 }
 
 void VideoPopout::setFullscreen(bool on) {
@@ -147,6 +148,11 @@ void VideoPopout::draw(GLFWwindow* main, unsigned tex, int w, int h) {
     if (glfwWindowShouldClose(win_)) {
         close();
         return;
+    }
+    const int waiting = tex && w > 0 ? 0 : 1;
+    if (waiting != waiting_) {
+        glfwSetWindowTitle(win_, waiting ? "KAVL video \xE2\x80\x94 waiting for a picture" : "KAVL video");
+        waiting_ = waiting;
     }
     glfwMakeContextCurrent(win_);
     int fw, fh;
