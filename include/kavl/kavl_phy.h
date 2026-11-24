@@ -33,12 +33,17 @@ constexpr int kDataSyms = 32400;
 constexpr int kPilotGroup = 32;               // data symbols per pilot
 constexpr int kPilots = (kDataSyms + kPilotGroup - 1) / kPilotGroup + 1;   // 1014
 constexpr int kRegionSyms = kDataSyms + kPilots;                          // 33414
-constexpr int kPreambleSyms = 64;
+// Preamble and header are long enough to find and read a frame at about -6 dB (owner: the hybrid fallback must keep its sync far below the digital
+// threshold): 832 preamble symbols give about 11 dB more correlation than 64, and the header is sent 4 times (6 dB) for 3.5 % more frame.
+constexpr int kPreambleSyms = 832;
+constexpr int kPreambleSeg = 64;                                          // the receiver's coarse search works on 13 segments of this length
 constexpr int kHeaderInfoBits = 64;
 constexpr int kHeaderCodedBits = (kHeaderInfoBits + 6) * 2;               // 140
+constexpr int kHeaderRepeat = 4;
+constexpr int kHeaderSyms = kHeaderCodedBits * kHeaderRepeat;             // 560
 constexpr int kHeaderStart = kPreambleSyms;                              // symbol index of the first header symbol
-constexpr int kRegionStart = kPreambleSyms + kHeaderCodedBits;           // 204
-constexpr int kFrameSyms = kRegionStart + kRegionSyms;                   // 33618
+constexpr int kRegionStart = kPreambleSyms + kHeaderSyms;                // 1392
+constexpr int kFrameSyms = kRegionStart + kRegionSyms;                   // 34806
 constexpr int kNumModcods = 13;
 constexpr int kMainModcod = 3;                                            // NUC-256 10/15: 2.01 Mbit/s at 392 ksym/s (11/15: 19.5 dB measured, 2.22 Mbit/s)
 // Profiles (the receiver must know the symbol rate; the header carries the modcod): 1440p60 = 392 ksym/s (400 kHz), 720p60 = 196 ksym/s (200 kHz).
@@ -117,7 +122,7 @@ private:
     int slice_[8] = {};
     int have_ = 0;                           // bit per slice seen
 };
-std::vector<cf> headerSymbols(const Header& h);       // 140 symbols: BPSK x j^i (a quarter turn per symbol, so the header looks like any other signal to the
+std::vector<cf> headerSymbols(const Header& h);       // kHeaderSyms: the 140 coded bits 4 times, BPSK x j^i (a quarter turn per symbol, so the header looks like any other signal to the
                                                       // receiver's blind IQ-imbalance estimate)
 
 // 64 pseudo-random QPSK symbols, unit magnitude. Not a Zadoff-Chu sequence: the symbol-to-symbol phase steps of a Zadoff-Chu sequence form a pure tone, so

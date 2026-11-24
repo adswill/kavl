@@ -48,7 +48,7 @@ public:
         double symRate = kDefaultSymRate;
         double inRate = 0.0;        // input sample rate; 0 = 4 x symRate (no resampling)
         bool iqCorrect = true;      // DC removal + IQ-imbalance correction
-        float detect = 0.30f;       // differential preamble metric threshold (0..1)
+        float detect = 0.12f;       // differential preamble metric threshold (0..1; about 0.17 at -6 dB, 0.035 on noise)
         int maxIter = 40;           // LDPC iterations
         bool ddPass = true;
         int pilotSmooth = 8;        // pilot gains are averaged over +-pilotSmooth pilots (wider: less noise in the estimate, slower phase tracking)

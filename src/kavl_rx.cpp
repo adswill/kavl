@@ -63,6 +63,10 @@ struct Receiver::Impl {
     double bPrev = 0.0;           // clock drift of the last frame (samples per symbol)
     bool haveB = false;
     std::vector<cf> dref;         // conj of the preamble's symbol-to-symbol products
+    std::vector<cf> dtaps;        // dref at every kSps-th tap: the differential correlation as one FFT correlation over q
+    std::vector<cf> dcor;         // dcor[n] = sum_m q[n + kSps m] dref[m], valid for n < dDone
+    long dDone = 0;
+    std::vector<double> pe;       // pe[i] = |mf[i]|^2 + pe[i - kSps]: the preamble window's energy in O(1)
     double kt = timingGain();
 
     explicit Impl(const Options& op) : o(op) {
@@ -74,6 +78,8 @@ struct Receiver::Impl {
         const auto& p = preambleSymbols();
         dref.resize(kPreambleSyms - 1);
         for (int m = 0; m < kPreambleSyms - 1; m++) dref[static_cast<size_t>(m)] = std::conj(p[static_cast<size_t>(m + 1)] * std::conj(p[static_cast<size_t>(m)]));
+        dtaps.assign(static_cast<size_t>(kSps * (kPreambleSyms - 2) + 1), cf(0, 0));
+        for (int m = 0; m < kPreambleSyms - 1; m++) dtaps[static_cast<size_t>(kSps * m)] = dref[static_cast<size_t>(m)];
     }
 
     void reset() {
@@ -83,6 +89,9 @@ struct Receiver::Impl {
         buf.clear();
         mf.clear();
         q.clear();
+        dcor.clear();
+        pe.clear();
+        dDone = 0;
         mfDone = scan = 0;
         base = 0;
         rejects = 0;
@@ -144,14 +153,25 @@ struct Receiver::Impl {
         mfDone = avail;
     }
 
-    // Differential preamble metric at sample n (needs mf up to n + 4 * 63).
+    // Differential preamble metric at sample n < dDone: |sum of the 831 symbol-to-symbol products against the preamble's| / the window's energy.
+    // About 1 on a clean preamble, 0.17 at -6 dB, 0.035 on noise or data (so 0.12 finds frames to about -6 dB with few false starts).
     double metric(long n, cf* dOut = nullptr) const {
-        cf d(0, 0);
-        double e = 0;
-        for (int m = 0; m < kPreambleSyms - 1; m++) d += q[static_cast<size_t>(n + kSps * m)] * dref[static_cast<size_t>(m)];
-        for (int m = 0; m < kPreambleSyms; m++) e += std::norm(mf[static_cast<size_t>(n + kSps * m)]);
+        const cf d = dcor[static_cast<size_t>(n)];
+        const long hi = n + kSps * (kPreambleSyms - 1);
+        const double e = pe[static_cast<size_t>(hi)] - (n >= kSps ? pe[static_cast<size_t>(n - kSps)] : 0.0);
         if (dOut) *dOut = d;
         return e > 1e-20 ? std::abs(d) / e : 0.0;
+    }
+    // the correlation and the energy sums for everything computeMf added (one FFT correlation per push instead of 831 products per sample)
+    void computeDetect() {
+        for (long i = static_cast<long>(pe.size()); i < mfDone; i++)
+            pe.push_back(std::norm(mf[static_cast<size_t>(i)]) + (i >= kSps ? pe[static_cast<size_t>(i - kSps)] : 0.0));
+        const long nt = static_cast<long>(dtaps.size());
+        const long upto = static_cast<long>(q.size()) - (nt - 1);
+        if (upto <= dDone) return;
+        dcor.resize(static_cast<size_t>(upto));
+        corrFft(q.data() + dDone, upto - dDone, dtaps, dcor.data() + dDone);
+        dDone = upto;
     }
 
     // The matched filter output of one frame with the carrier offset removed BEFORE the filter (at roll-off 0.02 the filter's edge is only about 4 kHz
@@ -221,21 +241,41 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
         return std::fabs(den) > 1e-12 ? std::clamp(0.5 * (m0 - m2) / den, -0.5, 0.5) : 0.0;
     };
 
-    // 0. A cheap look at the preamble alone before the whole frame is filtered. The differential metric's offset (f0) is rough at low SNR: about
-    //    0.035 cycles a symbol at 0 dB, more than the quarters below can take (+-0.031), so the header came out wrong on a third of the frames. A
-    //    coherent search over the known preamble (+-0.05 cycles a symbol in 1/400 steps, +-1 sample) finds it closely, and a detection whose best
-    //    coherent correlation stays low is noise: rejected here for the price of 64 symbols, not the whole frame (thousands a second at 0 dB).
+    // 0. A cheap look at the preamble alone before the whole frame is filtered. The differential metric's offset (f0) is rough at low SNR (about
+    //    0.03 cycles a symbol at -6 dB: tens of turns over 832 symbols). The 13 segments of 64 symbols are each correlated coherently; their
+    //    energy, summed, tolerates an offset of a few thousandths, so a search over +-0.08 cycles a symbol in 0.004 steps (+-1 sample) finds the
+    //    offset, and the phase from segment to segment refines it. A detection whose coherent correlation then stays low is noise: rejected for
+    //    the price of one preamble, not the whole frame.
     {
         buildLocal(static_cast<long>(std::floor(t0)) - 24, static_cast<long>(std::ceil(t0)) + kSps * kPreambleSyms + 48, f0);
-        double bestC = -1.0, bestF = 0.0, bestT = t0;
+        constexpr int S = kPreambleSyms / kPreambleSeg;
+        auto segs = [&](double t, double ff, cf* c) {
+            const double w = -kTwoPi * ff;
+            const cf step(static_cast<float>(std::cos(w)), static_cast<float>(std::sin(w)));
+            cf ph(1, 0);
+            for (int k = 0; k < S; k++) c[k] = cf(0, 0);
+            for (int m = 0; m < kPreambleSyms; m++) {
+                c[m / kPreambleSeg] += at(t + kSps * m) * ph * std::conj(pre[static_cast<size_t>(m)]);
+                ph *= step;
+            }
+        };
+        cf c[S];
+        double bestE = -1.0, bestF = 0.0, bestT = t0;
         for (int ti = -1; ti <= 1; ti++)
             for (int fi = -20; fi <= 20; fi++) {
-                const double ff = fi / 400.0, c = preCorr(t0 + ti, ff);
-                if (c > bestC) bestC = c, bestF = ff, bestT = t0 + ti;
+                segs(t0 + ti, fi * 0.004, c);
+                double e = 0;
+                for (int k = 0; k < S; k++) e += std::norm(c[k]);
+                if (e > bestE) bestE = e, bestF = fi * 0.004, bestT = t0 + ti;
             }
-        if (bestC < 0.4) return false;   // a real preamble gives about 0.7 at 0 dB and 0.6 at -2 dB; noise about 0.13 (at most about 0.4 next to a frame)
-        const double cm = preCorr(bestT, bestF - 1 / 400.0), cp = preCorr(bestT, bestF + 1 / 400.0);
-        f0 += bestF + parabola(cm, bestC, cp) / 400.0;
+        segs(bestT, bestF, c);
+        cf acc(0, 0);
+        for (int k = 0; k + 1 < S; k++) acc += c[k + 1] * std::conj(c[k]);
+        bestF += std::arg(acc) / (kTwoPi * kPreambleSeg);
+        const double bestC = preCorr(bestT, bestF);
+        // a real preamble gives about 0.45 at -6 dB and 0.7 at 0 dB; noise about 0.035, at most about 0.15 over the search
+        if (bestC < 0.25) return false;
+        f0 += bestF;
         t0 = bestT;
     }
     // the frame (and the next frame's preamble) through the matched filter with the offset removed; f below is the residual offset
@@ -246,11 +286,12 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
     cf h(0, 0);
     double nvPre = 1.0;
     for (int pass = 0; pass < 2; pass++) {
-        cf Q[4] = {};
-        for (int m = 0; m < kPreambleSyms; m++) Q[m / 16] += at(T(m)) * rot(f, m) * std::conj(pre[static_cast<size_t>(m)]);
+        constexpr int S = kPreambleSyms / kPreambleSeg;
+        cf Q[S] = {};
+        for (int m = 0; m < kPreambleSyms; m++) Q[m / kPreambleSeg] += at(T(m)) * rot(f, m) * std::conj(pre[static_cast<size_t>(m)]);
         cf acc(0, 0);
-        for (int i = 0; i < 3; i++) acc += Q[i + 1] * std::conj(Q[i]);
-        f += std::arg(acc) / (kTwoPi * 16.0);
+        for (int i = 0; i + 1 < S; i++) acc += Q[i + 1] * std::conj(Q[i]);
+        f += std::arg(acc) / (kTwoPi * kPreambleSeg);
         const double c0 = preCorr(t0 - 1.0, f), c1 = preCorr(t0, f), c2 = preCorr(t0 + 1.0, f);
         t0 += parabola(c0, c1, c2);
     }
@@ -268,18 +309,22 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
     //    offsets around it (8 more, up to +-0.0032); the CRC, the version and a known modcod pick the right one.
     static const cf quarter[4] = {cf(1, 0), cf(0, -1), cf(-1, 0), cf(0, 1)};   // conj(j^i)
     std::vector<float> hl(kHeaderCodedBits);
-    std::vector<cf> hy(kHeaderCodedBits);
-    for (int i = 0; i < kHeaderCodedBits; i++) {
+    std::vector<cf> hy(kHeaderSyms);
+    for (int i = 0; i < kHeaderSyms; i++) {
         const int k = kHeaderStart + i;
         hy[static_cast<size_t>(i)] = at(T(k)) * rot(f, k) * quarter[i % 4] / h;
     }
     bool hdrOk = false;
     for (int tryI = 0; tryI < 9 && !hdrOk; tryI++) {
-        const double df = (tryI == 0 ? 0 : (tryI + 1) / 2 * (tryI % 2 ? 1 : -1)) * 0.0008;
+        const double df = (tryI == 0 ? 0 : (tryI + 1) / 2 * (tryI % 2 ? 1 : -1)) * 0.0002;
         const int mid = kPreambleSyms / 2;   // h is the phase at the preamble's middle
         for (int i = 0; i < kHeaderCodedBits; i++) {
-            const cf y = hy[static_cast<size_t>(i)] * rot(df, kHeaderStart + i - mid);
-            hl[static_cast<size_t>(i)] = static_cast<float>(4.0 * y.real() / nvPre);
+            float sum = 0.f;   // the kHeaderRepeat copies of coded bit i, combined
+            for (int r = 0; r < kHeaderRepeat; r++) {
+                const int j = r * kHeaderCodedBits + i;
+                sum += (hy[static_cast<size_t>(j)] * rot(df, kHeaderStart + j - mid)).real();
+            }
+            hl[static_cast<size_t>(i)] = static_cast<float>(4.0 * sum / nvPre);
         }
         const auto hb = viterbiDecode(hl);
         if (hb.size() >= static_cast<size_t>(kHeaderInfoBits) && parseHeader(hb.data(), rf.hdr) && modcod(rf.hdr.modcod)) {
@@ -309,7 +354,7 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
                 bt = pred + d;
             }
         }
-        if (best > 0.5) {
+        if (best > 0.3) {   // the next preamble is there (about 0.45 even at -6 dB)
             bt += parabola(preCorr(bt - 1.0, f), best, preCorr(bt + 1.0, f));
             b = (bt - t0) / kFrameSyms - kSps;
             haveDrift = true;
@@ -557,18 +602,18 @@ std::vector<RxFrame> Receiver::Impl::push(const cf* iq, size_t n) {
         iqFix(buf.data() + old, n);
     }
     computeMf();
+    computeDetect();
 
-    const long win = kSps * (kPreambleSyms - 1);
     const double ratio = (o.inRate > 0 ? o.inRate : kSps * o.symRate) / (kSps * o.symRate);
     for (;;) {
-        if (scan + win + 16 >= static_cast<long>(q.size())) break;
+        if (scan + 16 >= dDone) break;
         const double m = metric(scan);
         if (m < o.detect) {
             scan++;
             continue;
         }
         // peak within the next 12 samples
-        if (scan + 13 + win >= static_cast<long>(q.size())) break;
+        if (scan + 13 >= dDone) break;
         long best = scan;
         double bm = m;
         for (long k = scan + 1; k <= scan + 12; k++) {
@@ -608,6 +653,9 @@ std::vector<RxFrame> Receiver::Impl::push(const cf* iq, size_t n) {
         buf.erase(buf.begin(), buf.begin() + drop);
         mf.erase(mf.begin(), mf.begin() + drop);
         q.erase(q.begin(), q.begin() + std::min<long>(drop, static_cast<long>(q.size())));
+        dcor.erase(dcor.begin(), dcor.begin() + std::min<long>(drop, static_cast<long>(dcor.size())));
+        pe.erase(pe.begin(), pe.begin() + std::min<long>(drop, static_cast<long>(pe.size())));
+        dDone -= drop;
         mfDone -= drop;
         scan -= drop;
         base += drop;

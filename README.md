@@ -21,12 +21,12 @@ Every profile is built to work at about **1 dB** of signal-to-noise ratio, as na
 
 | Profile | Width | Signal needed | Video (AV1) | Sound (Opus) |
 |---|---|---|---|---|
-| 360p15 | 100 kHz | about 1 dB | 24 kbit/s | stereo 32 kbit/s |
-| 360p30 | 150 kHz | about 1 dB | 58 kbit/s | stereo 32 kbit/s |
-| 720p60 | 290 kHz | about 1 dB | 149 kbit/s | stereo 32 kbit/s |
-| 1080p60 | 440 kHz | about 1 dB | 251 kbit/s | stereo 32 kbit/s |
-| 1440p60 | 660 kHz | about 1 dB | 402 kbit/s | stereo 32 kbit/s |
-| 4K60 | 1 MHz | about 1 dB | 636 kbit/s | stereo 32 kbit/s |
+| 360p15 | 100 kHz | about 1 dB | 22 kbit/s | stereo 32 kbit/s |
+| 360p30 | 150 kHz | about 1 dB | 55 kbit/s | stereo 32 kbit/s |
+| 720p60 | 290 kHz | about 1 dB | 142 kbit/s | stereo 32 kbit/s |
+| 1080p60 | 440 kHz | about 1 dB | 241 kbit/s | stereo 32 kbit/s |
+| 1440p60 | 660 kHz | about 1 dB | 387 kbit/s | stereo 32 kbit/s |
+| 4K60 | 1 MHz | about 1 dB | 612 kbit/s | stereo 32 kbit/s |
 
 Live, a key frame comes every 2 s (4 s at 360p, where they would take too much of so few bits); an encoded file has them half as often. The picture is soft at these rates, most of all with fast motion and fine texture; faces and slow scenes hold up well. The video budget is what the width leaves after the sound, the packet overhead and 10 % headroom.
 
@@ -188,9 +188,9 @@ The frequency, the TX gain and the amplifier change at once while transmitting. 
 ## How it works
 
 - Single carrier, root-raised-cosine roll-off 0.02.
-- Frames of 32400 data symbols with a known pilot every 32 symbols, a 64-symbol preamble and a 140-symbol header.
+- Frames of 32400 data symbols with a known pilot every 32 symbols, an 832-symbol preamble and a header sent 4 times (560 symbols). That much preamble and header lets the receiver find frames and read their headers down to about -6 dB (39 of 40 frames on a noise channel, 26 of 40 at -8 dB), far below where the data decodes: room for a fallback picture that keeps going when the digital one stops.
 - Error correction: ATSC 3.0 LDPC codes, 64800 bits. The profiles use QPSK with the rate 6/15 code; the receiver also knows rates 8/15 to 13/15 with non-uniform constellations (NUC-16 to NUC-1024), which the header can name.
-- The receiver finds frames by a differential preamble search that is blind to the frequency offset. It removes the offset before the matched filter, measures the clock drift from one preamble to the next and tracks the phase from the pilots.
+- The receiver finds frames by a differential preamble search that is blind to the frequency offset (one FFT correlation per block of samples), then confirms each with a coherent search over the preamble's 13 segments. It removes the offset before the matched filter, measures the clock drift from one preamble to the next and tracks the phase from the pilots.
 - Audio and video packets run across the code words. Each code word points to the first packet that starts in it, so a lost code word costs only the packets in it.
 - Optional protection across frames: Reed-Solomon over GF(256), groups of 8 to 32 frames with 1 or 2 parity frames. The frame header names the protection, so the receiver needs no setting.
 ## Limits

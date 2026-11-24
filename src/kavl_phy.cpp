@@ -301,10 +301,10 @@ void StationIdReader::reset() {
 }
 
 std::vector<cf> headerSymbols(const Header& h) {
-    const auto coded = convEncode(headerBits(h));
+    const auto coded = convEncode(headerBits(h));   // kHeaderCodedBits
     static const cf q[4] = {cf(1, 0), cf(0, 1), cf(-1, 0), cf(0, -1)};
-    std::vector<cf> s(coded.size());
-    for (size_t i = 0; i < coded.size(); i++) s[i] = q[i % 4] * (coded[i] ? -1.f : 1.f);
+    std::vector<cf> s(static_cast<size_t>(kHeaderSyms));
+    for (size_t i = 0; i < s.size(); i++) s[i] = q[i % 4] * (coded[i % coded.size()] ? -1.f : 1.f);   // the coded block kHeaderRepeat times
     return s;
 }
 

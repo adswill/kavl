@@ -68,5 +68,7 @@ void fft(cf* x, int n, bool inverse);
 // Linear-phase FIR filtering of a long complex block by overlap-save FFT convolution (real taps, odd length). out[i] = sum_k taps[k] in[i + k],
 // i = 0 .. nOut - 1 (in holds nOut + taps.size() - 1 samples). Blocks run in parallel.
 void firFft(const cf* in, long nOut, const std::vector<float>& taps, cf* out);
+// The same with complex taps: out[i] = sum taps[k] in[i + k], i < nOut (in needs nOut + taps.size() - 1 samples).
+void corrFft(const cf* in, long nOut, const std::vector<cf>& taps, cf* out);
 
 }  // namespace kavl

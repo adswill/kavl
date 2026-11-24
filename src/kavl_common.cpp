@@ -101,6 +101,28 @@ void fft(cf* x, int n, bool inverse) {
     }
 }
 
+void corrFft(const cf* in, long nOut, const std::vector<cf>& taps, cf* out) {
+    const int nt = static_cast<int>(taps.size());
+    if (nOut <= 0 || nt == 0) return;
+    int n = 1;
+    while (n < 4 * nt) n <<= 1;
+    n = std::max(n, 4096);
+    const int step = n - (nt - 1);
+    std::vector<cf> H(static_cast<size_t>(n), cf(0, 0));   // reversed taps: a convolution that reads as a correlation
+    for (int k = 0; k < nt; k++) H[static_cast<size_t>(k)] = taps[static_cast<size_t>(nt - 1 - k)];
+    fft(H.data(), n, false);
+    std::vector<cf> b(static_cast<size_t>(n));
+    for (long o0 = 0; o0 < nOut; o0 += step) {
+        const long cnt = std::min<long>(step, nOut - o0), avail = cnt + nt - 1;
+        for (long i = 0; i < n; i++) b[static_cast<size_t>(i)] = i < avail ? in[o0 + i] : cf(0, 0);
+        fft(b.data(), n, false);
+        for (int i = 0; i < n; i++) b[static_cast<size_t>(i)] *= H[static_cast<size_t>(i)];
+        fft(b.data(), n, true);
+        const float inv = 1.f / static_cast<float>(n);
+        for (long i = 0; i < cnt; i++) out[o0 + i] = b[static_cast<size_t>(i + nt - 1)] * inv;
+    }
+}
+
 void firFft(const cf* in, long nOut, const std::vector<float>& taps, cf* out) {
     const int nt = static_cast<int>(taps.size());
     int n = 1;

@@ -115,7 +115,7 @@ static void testHeader() {
     }
     CHECK(r2.callsign() == "M0ABC");
     CHECK(stationIdSlice("", 3) == 0);
-    CHECK(headerSymbols(h).size() == static_cast<size_t>(kHeaderCodedBits));
+    CHECK(headerSymbols(h).size() == static_cast<size_t>(kHeaderSyms));
 }
 
 static void testInterleaver() {
@@ -186,6 +186,17 @@ static void testWeakSignal() {
     CHECK(r.blocksOk >= 19);
 }
 
+// Deep sync: frames (preamble and header) found at -5 dB, where the hybrid fallback must still work (832-symbol preamble, header sent 4 times).
+static void testDeepSync() {
+    Channel c;
+    c.esn0Db = -5.0;
+    c.cfoHz = 1234.0;
+    c.delaySamples = 0.21;
+    const auto r = runLink(12, 20, c, 4343);
+    std::printf("deep sync at -5 dB: frames found %d/%d\n", r.framesFound, r.framesSent);
+    CHECK(r.framesFound >= 19);
+}
+
 static void testNoiseOnly() {
     Rng rng(7);
     std::vector<cf> x(400000);
@@ -206,6 +217,7 @@ int main() {
     testClean();
     testRtlLink();
     testWeakSignal();
+    testDeepSync();
     testNoiseOnly();
     if (fails) {
         std::printf("test_kavl_phy: %d failures\n", fails);

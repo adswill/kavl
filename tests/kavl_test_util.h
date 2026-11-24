@@ -145,7 +145,9 @@ inline RunResult runLink(int m, int frames, const Channel& c, uint64_t seed, int
         auto f = rx.push(iq.data() + at, std::min(static_cast<size_t>(chunk), iq.size() - at));
         got.insert(got.end(), f.begin(), f.end());
     }
-    const std::vector<cf> tail(static_cast<size_t>(kavl::kSps * 400), cf(0, 0));
+    // silence after the last frame: the receiver decodes a frame once the next frame's preamble (kPreambleSyms) would be in its buffer
+    const double perSym = c.outRate > 0 ? c.outRate / c.symRate : kavl::kSps;   // input samples a symbol
+    const std::vector<cf> tail(static_cast<size_t>(perSym * (kavl::kPreambleSyms + 400)), cf(0, 0));
     auto f = rx.push(tail.data(), tail.size());
     got.insert(got.end(), f.begin(), f.end());
     for (const auto& fr : got) {
