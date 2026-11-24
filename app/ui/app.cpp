@@ -50,7 +50,11 @@ App* gApp = nullptr;
 void loadSettings(App& a) {
     Settings& c = a.cfg;
     c.load();
-    a.srcKind = std::clamp(static_cast<int>(c.num("rx.source", 0)), 0, 3);
+    a.srcKind = std::clamp(static_cast<int>(c.num("rx.source", 0)), 0, 4);
+    a.soundIq.device = c.str("rx.sound.device", "");
+    a.soundIq.rate = static_cast<int>(c.num("rx.sound.rate", 48000));
+    a.soundIq.swapIq = c.flag("rx.sound.swap", false);
+    a.soundIq.centreHz = c.num("rx.sound.centreHz", 0.0);
     a.iqPath = c.str("rx.file");
     a.freqMHz = c.num("rx.freqMHz", 433.0);
     {   // Recent: "433.0000,432.5000,..."
@@ -123,6 +127,10 @@ void loadSettings(App& a) {
 void saveSettings(App& a) {
     Settings& c = a.cfg;
     c.set("rx.source", a.srcKind);
+    c.set("rx.sound.device", a.soundIq.device);
+    c.set("rx.sound.rate", a.soundIq.rate);
+    c.set("rx.sound.swap", a.soundIq.swapIq);
+    c.set("rx.sound.centreHz", a.soundIq.centreHz);
     c.set("rx.file", a.iqPath);
     c.set("rx.freqMHz", a.freqMHz);
     {
@@ -232,6 +240,7 @@ void takeDevices(App& a) {
 void refreshDevices(App& a) {
     a.rtlDevs = listRtlSdr();
     a.hrfDevs = listHackRf();
+    if (a.srcKind == 4) a.soundInputs = listSoundInputs();   // names only: no input is opened
     a.rtlDev = std::clamp(a.rtlDev, 0, std::max(0, static_cast<int>(a.rtlDevs.size()) - 1));
     a.hrfDev = std::clamp(a.hrfDev, 0, std::max(0, static_cast<int>(a.hrfDevs.size()) - 1));
 }
@@ -265,8 +274,9 @@ void updateSpectrum(App& a) {
 // what the chosen receive radio can tune (MHz)
 void rxRange(const App& a, double& lo, double& hi, const char*& name) {
     if (a.srcKind == 1) lo = 24, hi = 1766, name = "The RTL-SDR";
+    else if (a.srcKind == 4) lo = 0.03, hi = 6000, name = "The rig";
     else lo = 1, hi = 6000, name = a.srcKind == 2 ? "The HackRF" : "KAVL";
-    if ((a.srcKind == 1 || a.srcKind == 2) && a.rxConv.on) {   // on the air, through the converter
+    if ((a.srcKind == 1 || a.srcKind == 2 || a.srcKind == 4) && a.rxConv.on) {   // on the air, through the converter
         const double l = a.rxConv.airMHz(lo), h = a.rxConv.airMHz(hi);
         lo = std::min(l, h), hi = std::max(l, h);
         name = a.srcKind == 1 ? "The RTL-SDR through the converter" : "The HackRF through the converter";
@@ -274,7 +284,7 @@ void rxRange(const App& a, double& lo, double& hi, const char*& name) {
 }
 
 double rxRadioHz(const App& a) {
-    return (a.srcKind == 1 || a.srcKind == 2 ? a.rxConv.radioMHz(a.freqMHz) : a.freqMHz) * 1e6;
+    return (a.srcKind == 1 || a.srcKind == 2 || a.srcKind == 4 ? a.rxConv.radioMHz(a.freqMHz) : a.freqMHz) * 1e6;
 }
 
 double txRadioHz(const App& a) {
@@ -380,13 +390,15 @@ void startRx(App& a) {
         src = makeRtlSource(s, rxRadioHz(a), width);
     } else if (a.srcKind == 3) {
         src = makeLoopbackSource(a.freqMHz * 1e6);
+    } else if (a.srcKind == 4) {   // the rig's IQ through a sound card; the rig itself is tuned by rig control
+        src = makeSoundIqSource(a.soundIq, rxRadioHz(a), [&a](double hz) { a.rig.setFrequency(hz); });
     } else {
         if (a.hrfDevs.empty()) refreshDevices(a);
         HackRfSettings s = a.hrf;
         if (!a.hrfDevs.empty()) s.serial = a.hrfDevs[static_cast<size_t>(a.hrfDev)].serial;
         src = makeHackRfSource(s, rxRadioHz(a), width);
     }
-    a.rx.setInvert((a.srcKind == 1 || a.srcKind == 2) && a.rxConv.on && a.rxConv.invert);
+    a.rx.setInvert((a.srcKind == 1 || a.srcKind == 2 || a.srcKind == 4) && a.rxConv.on && a.rxConv.invert);
     if (!a.rx.start(std::move(src), a.profile)) a.rxError = a.rx.error();
     if (a.rigCfg.follow == 1) rigFollow(a);
     a.havePic = false;

@@ -57,6 +57,41 @@ void radioSettings(App& a) {
         freqInput();
         return;
     }
+    if (a.srcKind == 4) {   // a rig's IQ through a sound card
+        if (!run) {
+            ImGui::SetNextItemWidth(-px(70));
+            if (ImGui::BeginCombo("##sndin", a.soundIq.device.empty() ? "The default input" : a.soundIq.device.c_str())) {
+                if (ImGui::Selectable("The default input", a.soundIq.device.empty())) a.soundIq.device.clear();
+                for (const auto& n : a.soundInputs)
+                    if (ImGui::Selectable(n.c_str(), n == a.soundIq.device)) a.soundIq.device = n;
+                ImGui::EndCombo();
+            }
+            ImGui::SetItemTooltip("The audio input the rig's I/Q comes in on (left I, right Q)");
+            ImGui::SameLine();
+            if (ImGui::Button("Rescan##refs", ImVec2(-1, 0))) refreshDevices(a);
+            static const int rates[] = {48000, 96000, 192000};
+            int ri = a.soundIq.rate == 192000 ? 2 : a.soundIq.rate == 96000 ? 1 : 0;
+            ImGui::SetNextItemWidth(px(140));
+            if (ImGui::Combo("##sndrate", &ri, "48 kHz\0" "96 kHz\0" "192 kHz\0")) a.soundIq.rate = rates[ri];
+            ImGui::SetItemTooltip("The input's sample rate: the IQ is this wide. 48 kHz is enough for the 12 and 24 kHz profiles");
+            ImGui::SameLine();
+            ImGui::Checkbox("Swap I/Q", &a.soundIq.swapIq);
+            ImGui::SetItemTooltip("For rigs that give Q on the left: the spectrum comes out mirrored without it");
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputDouble("##sndctr", &a.soundIq.centreHz, 100.0, 1000.0, "Dial at %+.0f Hz in the IQ");
+            ImGui::SetItemTooltip("Where the rig's dial frequency sits in its I/Q (0 for most; some rigs put it a few kHz off)");
+        }
+        freqInput();
+        converterUi(a, a.rxConv, "rxconv", run, a.freqMHz);
+        if (!a.rig.active()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
+            ImGui::TextWrapped("Tune the rig by hand, or connect it in Radio > Rig control so KAVL tunes it.");
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextDisabled("Rig control tunes the rig");
+        }
+        return;
+    }
     if (!run && a.srcKind == 1) {   // the device choice: only while stopped
         ImGui::Checkbox("Remote rtl_tcp server", &a.rtl.remote);
         if (a.rtl.remote) {
@@ -133,7 +168,7 @@ void receivePanel(App& a, float w, float h) {
     const bool rxOpen = ImGui::CollapsingHeader("Receive", ImGuiTreeNodeFlags_DefaultOpen);
     ImGui::PopFont();
     if (rxOpen && run) {   // the choices are locked while receiving: one line says what was chosen
-        static const char* srcNames[] = {"IQ file", "RTL-SDR", "HackRF", "Loopback (this Mac's transmitter)"};
+        static const char* srcNames[] = {"IQ file", "RTL-SDR", "HackRF", "Loopback (this Mac's transmitter)", "Sound card IQ (a rig)"};
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
         ImGui::TextWrapped("%s%s%s", srcNames[std::clamp(a.srcKind, 0, 3)], a.profile >= 0 ? ", " : "", a.profile >= 0 ? kavl::videoProfile(a.profile).name : "");
         ImGui::PopStyleColor();
@@ -141,7 +176,7 @@ void receivePanel(App& a, float w, float h) {
     if (rxOpen) {
         if (!run) {
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::Combo("##src", &a.srcKind, "IQ file\0RTL-SDR (rtl_tcp)\0HackRF\0Loopback (this Mac's transmitter)\0") && a.srcKind > 0) refreshDevices(a);
+        if (ImGui::Combo("##src", &a.srcKind, "IQ file\0RTL-SDR (rtl_tcp)\0HackRF\0Loopback (this Mac's transmitter)\0Sound card IQ (a rig)\0") && a.srcKind > 0) refreshDevices(a);
         ImGui::SetItemTooltip("Where the signal comes from. Loopback: this Mac's own transmitter, no radio needed");
         ImGui::SetNextItemWidth(-1);
         int sel = a.profile + 1;   // 0 = Auto

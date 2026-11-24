@@ -17,6 +17,7 @@
 #include "live_feed.h"
 #include "player.h"
 #include "rig.h"
+#include "sound_iq.h"
 #include "rx_engine.h"
 #include "settings.h"
 #include "sources.h"
@@ -126,7 +127,9 @@ struct App {
     std::mutex camMtx;
     std::vector<CaptureDevice> newCams, newMics;
     // receive
-    int srcKind = 0;   // 0 IQ file, 1 RTL-SDR, 2 HackRF, 3 loopback (this Mac's transmitter)
+    int srcKind = 0;   // 0 IQ file, 1 RTL-SDR, 2 HackRF, 3 loopback (this Mac's transmitter), 4 sound card IQ (a rig)
+    SoundIqSettings soundIq;
+    std::vector<std::string> soundInputs;   // listed when that source is chosen (Rescan)
     Converter rxConv, txConv;   // an LNB or transverter between each radio and the antenna (on-air frequencies everywhere on screen)
     std::string iqPath;
     double freqMHz = 433.0;

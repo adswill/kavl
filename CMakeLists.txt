@@ -59,7 +59,7 @@ if(KAVL_BUILD_APP)
             ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/JetBrainsMono-Regular.ttf)
   add_executable(kavl MACOSX_BUNDLE app/main.cpp
     app/engine/player.cpp app/engine/rx_engine.cpp app/engine/tx_engine.cpp app/engine/sources.cpp app/engine/settings.cpp app/engine/live_feed.cpp
-    app/engine/loopback.cpp app/engine/callsign.cpp app/engine/rig.cpp
+    app/engine/loopback.cpp app/engine/callsign.cpp app/engine/rig.cpp app/engine/sound_iq.cpp
     app/ui/app.cpp app/ui/widgets.cpp app/ui/picture.cpp app/ui/receive_panel.cpp app/ui/transmit_panel.cpp app/ui/callsign_editor.cpp app/ui/station.cpp
     app/ui/spectrum_view.cpp app/ui/video_gl.cpp app/ui/video_popout.cpp app/ui/rig_window.cpp
     ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
@@ -82,4 +82,9 @@ if(KAVL_BUILD_APP)
   add_executable(test_kavl_rig tests/test_kavl_rig.cpp app/engine/rig.cpp)
   target_include_directories(test_kavl_rig PRIVATE app/engine)
   add_test(NAME kavl_rig COMMAND test_kavl_rig)
+  add_executable(test_kavl_soundiq tests/test_kavl_soundiq.cpp app/engine/sound_iq.cpp app/engine/player.cpp)
+  target_include_directories(test_kavl_soundiq PRIVATE app/engine third_party/miniaudio)
+  target_link_libraries(test_kavl_soundiq PRIVATE kavlcore PkgConfig::DAV1D PkgConfig::OPUS "-framework CoreAudio" "-framework AudioToolbox"
+    "-framework CoreFoundation")
+  add_test(NAME kavl_soundiq COMMAND test_kavl_soundiq)
 endif()
