@@ -112,12 +112,15 @@ void RxEngine::onSamples(const kavl::cf* x, size_t n) {
     qCv_.notify_one();
 }
 
-double RxEngine::signalWidthHz() {
+// The signal near where it should be: its occupied width, and how far its middle sits from where it should (power-weighted over its bins, finer
+// than one bin). It is looked for within 20 kHz, because a narrow signal from radios whose crystals are 10-20 ppm off can sit beside the spot
+// altogether. False while nothing stands out of the noise there.
+bool RxEngine::signalBand(double& widthHz, double& shiftHz) {
     std::vector<float> s;
     double fs, off;
     {
         std::lock_guard<std::mutex> sp(specMtx_);
-        if (specCount_ < 10) return 0;   // the average needs a moment
+        if (specCount_ < 10) return false;   // the average needs a moment
         s = spec_;
         fs = fs_;
         off = offset_;
@@ -130,12 +133,34 @@ double RxEngine::signalWidthHz() {
         auto v = [&](int k) { return s[static_cast<size_t>(std::clamp(k, 0, n - 1))]; };
         return (v(i - 1) + v(i) + v(i + 1)) / 3.f;
     };
-    const int c = std::clamp(n / 2 + static_cast<int>(std::lround(-off / fs * n)), 0, n - 1);   // where the signal sits
-    if (at(c) < floorDb + 8.f) return 0;
-    int l = c, r = c;
+    const double cExact = n / 2 - off / fs * n;   // bin n/2 is 0 Hz
+    const int c = std::clamp(static_cast<int>(std::lround(cExact)), 0, n - 1);
+    const int reach = std::max(1, static_cast<int>(std::lround(20e3 / fs * n)));
+    int p = -1;
+    for (int d = 0; d <= reach && p < 0; d++)
+        for (int k : {c - d, c + d})
+            if (k >= 0 && k < n && at(k) >= floorDb + 8.f) {
+                p = k;
+                break;
+            }
+    if (p < 0) return false;
+    int l = p, r = p;
     while (l > 0 && at(l - 1) > floorDb + 6.f) l--;
     while (r < n - 1 && at(r + 1) > floorDb + 6.f) r++;
-    return (r - l + 1) * fs / n;
+    double sw = 0, sx = 0;
+    for (int i = l; i <= r; i++) {
+        const double w = std::pow(10.0, (s[static_cast<size_t>(i)] - floorDb) / 10.0);
+        sw += w;
+        sx += w * i;
+    }
+    widthHz = (r - l + 1) * fs / n;
+    shiftHz = (sx / sw - cExact) * fs / n;
+    return true;
+}
+
+double RxEngine::signalWidthHz() {
+    double w = 0, sh = 0;
+    return signalBand(w, sh) ? w : 0;
 }
 
 int RxEngine::detect(double fs, double offset) {
@@ -146,14 +171,16 @@ int RxEngine::detect(double fs, double offset) {
         if (std::find(rates.begin(), rates.end(), r) == rates.end()) rates.push_back(r);
     }
     // A header search on every rate at once is far slower than real time. The width of the signal in the spectrum names the likely rates: only
-    // the two closest run, and none while nothing stands out of the noise. After 1.5 s without a header the choice is made again.
+    // the two closest run, and none while nothing stands out of the noise. After 1.5 s without a header (2.2 frame times on the narrow profiles,
+    // whose frames last 1.4-2.9 s) the choice is made again.
     std::vector<double> cand;
     std::vector<std::unique_ptr<kavl::Receiver>> rx;
-    double candSec = 0;
+    double candSec = 0, candLimit = 1.5;
     auto choose = [&]() {
         cand.clear();
         rx.clear();
         candSec = 0;
+        candLimit = 1.5;
         const double w = signalWidthHz();
         if (w <= 0) return;
         std::vector<double> byFit(rates);
@@ -161,6 +188,7 @@ int RxEngine::detect(double fs, double offset) {
         for (double r : byFit) {
             if (cand.size() == 2 || std::abs(kavl::occupiedHz(r) - w) > 0.3 * kavl::occupiedHz(r)) break;
             cand.push_back(r);
+            candLimit = std::max(candLimit, 2.2 * kavl::frameSeconds(r));
             kavl::Receiver::Options o;
             o.symRate = r;
             o.inRate = fs;
@@ -172,9 +200,15 @@ int RxEngine::detect(double fs, double offset) {
         std::lock_guard<std::mutex> sl(sMtx_);
         st_.detecting = true;
     }
-    const double w = 2.0 * 3.14159265358979 * offset / fs;
-    const kavl::cf step(static_cast<float>(std::cos(w)), static_cast<float>(std::sin(w)));
-    kavl::cf ph(1, 0);
+    // the mixer that brings the signal to the middle; on the narrow profiles also by how far the spectrum shows it off (their receivers find
+    // offsets of up to 0.4 symbol rates only: 4.7 kHz at 12 kHz wide)
+    kavl::cf step(1, 0), ph(1, 0);
+    double shift = 0;
+    auto setMixer = [&](double hz) {
+        const double w = 2.0 * 3.14159265358979 * hz / fs;
+        step = kavl::cf(static_cast<float>(std::cos(w)), static_cast<float>(std::sin(w)));
+    };
+    setMixer(offset);
     for (;;) {
         std::vector<kavl::cf> chunk;
         {
@@ -196,16 +230,19 @@ int RxEngine::detect(double fs, double offset) {
             q_.pop_front();
             queued_ -= static_cast<long>(chunk.size());
         }
-        if (offset != 0.0) {
+        if (rx.empty() || candSec > candLimit) {
+            choose();
+            double bw = 0, sh = 0;
+            const double nextShift = !cand.empty() && kavl::occupiedHz(cand.back()) < 100e3 && signalBand(bw, sh) ? sh : 0.0;
+            if (nextShift != shift) setMixer(offset - (shift = nextShift));
+            if (rx.empty()) continue;
+        }
+        if (offset - shift != 0.0) {
             for (size_t i = 0; i < chunk.size(); i++) {
                 chunk[i] *= ph;
                 ph *= step;
                 if ((i & 4095) == 0) ph /= std::abs(ph);
             }
-        }
-        if (rx.empty() || candSec > 1.5) {
-            choose();
-            if (rx.empty()) continue;
         }
         candSec += static_cast<double>(chunk.size()) / fs;
         std::vector<int> found(cand.size(), -1);   // the modcod each detector saw
@@ -231,9 +268,9 @@ int RxEngine::detect(double fs, double offset) {
     }
 }
 
-// Runs until stopped. A transmission that stops and starts again is picked up by itself: after a gap of more than 1.5 s without a frame the
-// demuxer starts afresh (protection groups and frame numbers restart) and so does the player's time line; with Auto, 3 s without a frame
-// goes back to finding the profile (the next transmission may use another one).
+// Runs until stopped. A transmission that stops and starts again is picked up by itself: after a gap of more than 1.5 s without a frame (2.5
+// frame times on the narrow profiles) the demuxer starts afresh (protection groups and frame numbers restart) and so does the player's time line;
+// with Auto, twice that without a frame goes back to finding the profile (the next transmission may use another one).
 void RxEngine::worker(int fixedProfile, double fs, double offset) {
     long long n0 = 0;
     const auto wall0 = std::chrono::steady_clock::now();
@@ -258,15 +295,23 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
     o.inRate = fs;
     kavl::Receiver rx(o);
     auto demux = std::make_unique<kavl::av::Demuxer>();
-    // the radios put the signal at -offset: shift it back to the middle
-    const double w = 2.0 * 3.14159265358979 * offset / fs;
-    const kavl::cf step(static_cast<float>(std::cos(w)), static_cast<float>(std::sin(w)));
-    kavl::cf ph(1, 0);
+    // the radios put the signal at -offset: shift it back to the middle; on a narrow profile also by how far the spectrum shows it off, measured
+    // again each second while no frame comes (the receiver alone finds offsets of up to 0.4 symbol rates: 4.7 kHz at 12 kHz wide)
+    kavl::cf step(1, 0), ph(1, 0);
+    auto setMixer = [&](double hz) {
+        const double w = 2.0 * 3.14159265358979 * hz / fs;
+        step = kavl::cf(static_cast<float>(std::cos(w)), static_cast<float>(std::sin(w)));
+    };
+    setMixer(offset);
+    const bool narrow = kavl::occupiedHz(vp.symRate) < 100e3;
+    double shift = 0;
+    auto lastMeasure = std::chrono::steady_clock::now() - std::chrono::hours(1);
     int bufFec = -1;
     using SteadyClock = std::chrono::steady_clock;
     const auto tStart = SteadyClock::now();
     auto lastFrame = SteadyClock::time_point();   // when the last frame came (wall clock: the queue may drop samples)
     bool haveFrame = false;
+    const double gapSec = std::max(1.5, 2.5 * kavl::frameSeconds(vp.symRate));   // longer than any wait between two frames
     auto sinceFrame = [&] { return std::chrono::duration<double>(SteadyClock::now() - (haveFrame ? lastFrame : tStart)).count(); };
     for (;;) {
         std::vector<kavl::cf> chunk;
@@ -289,7 +334,7 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
                 continue;
             }
             // nothing received lately: skip a backlog rather than search stale noise (and come back late when the signal returns)
-            while (sinceFrame() > 1.5 && queued_ > static_cast<long>(0.3 * fs) && q_.size() > 1) {
+            while (sinceFrame() > gapSec && queued_ > static_cast<long>(0.3 * fs) && q_.size() > 1) {
                 queued_ -= static_cast<long>(q_.front().size());
                 n0 += static_cast<long long>(q_.front().size());
                 q_.pop_front();
@@ -298,7 +343,15 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
             q_.pop_front();
             queued_ -= static_cast<long>(chunk.size());
         }
-        if (offset != 0.0) {
+        if (narrow && (!haveFrame || sinceFrame() > gapSec) && SteadyClock::now() - lastMeasure > std::chrono::seconds(1)) {
+            lastMeasure = SteadyClock::now();
+            double bw = 0, sh = 0;
+            if (signalBand(bw, sh) && std::abs(sh - shift) > 0.2 * vp.symRate) {   // the receiver copes with the rest (0.4)
+                setMixer(offset - (shift = sh));
+                rx.reset();   // what it holds was mixed with the old shift
+            }
+        }
+        if (offset - shift != 0.0) {
             for (size_t i = 0; i < chunk.size(); i++) {
                 chunk[i] *= ph;
                 ph *= step;
@@ -321,7 +374,7 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
         }
         const auto frames = rx.push(chunk.data(), chunk.size());
         if (!frames.empty()) {
-            if (haveFrame && sinceFrame() > 1.5) {   // the transmission stopped and came back: a new one
+            if (haveFrame && sinceFrame() > gapSec) {   // the transmission stopped and came back: a new one
                 lostBefore_ += demux->stats().lost;
                 rebuiltBefore_ += demux->stats().recovered;
                 demux = std::make_unique<kavl::av::Demuxer>();
@@ -332,10 +385,10 @@ bool RxEngine::receive(int profile, bool autoProfile, double fs, double offset, 
             }
             lastFrame = SteadyClock::now();
             haveFrame = true;
-        } else if (autoProfile && sinceFrame() > 3.0) {
+        } else if (autoProfile && sinceFrame() > 2.0 * gapSec) {
             lostBefore_ += demux->stats().lost;
             rebuiltBefore_ += demux->stats().recovered;
-            return true;   // nothing for 3 s: find the profile again
+            return true;   // nothing for a while (3 s on the wide profiles): find the profile again
         }
         for (const auto& f : frames) {
             if (f.hdr.fec != bufFec && f.mc) {   // packets come a protection group at a time: the player waits one group more before it starts

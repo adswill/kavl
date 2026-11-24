@@ -78,8 +78,9 @@ void transmitPanel(App& a, float w, float h) {
         ImGui::Combo("##txfec", &a.txFec, [](void*, int i) { return i == 0 ? "No extra protection" : kavl::fec::profileName(i); }, nullptr, kavl::fec::kNumProfiles);
         ImGui::SetItemTooltip("Parity frames: any lost frame of a group is rebuilt (a burst of interference, a fade). Costs video bits, and adds one group of delay");
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("%dx%d at %d fps: AV1 %d kbit/s + Opus 112 kbit/s, %s, %.0f kHz wide, needs about %.1f dB", vp.width, vp.height,
-                           a.txSource == 0 ? vp.fps : std::min(vp.fps, a.liveFps ? 60 : 30), kavl::videoKbps(vp, a.txFec), kavl::modcod(vp.modcod)->name,
+        ImGui::TextWrapped("%dx%d at %d fps: AV1 %d kbit/s + Opus %s %d kbit/s, %s, %.0f kHz wide, needs about %.1f dB", vp.width, vp.height,
+                           a.txSource == 0 ? vp.fps : std::min(vp.fps, a.liveFps ? 60 : 30), kavl::videoKbps(vp, a.txFec), vp.soundChannels == 1 ? "mono" : "stereo",
+                           vp.soundKbps, kavl::modcod(vp.modcod)->name,
                            kavl::occupiedHz(vp.symRate) / 1e3, thresholdDb(kavl::modcod(vp.modcod)));
         ImGui::PopStyleColor();
         if (a.txSource != 0 && vp.width > 2560) ImGui::TextColored(pal::warnAmber(), "Live 4K: the real-time encoder gives a softer picture than an encoded file.");

@@ -46,14 +46,20 @@ constexpr double kSymRate1440 = 392000.0, kSymRate720 = 196000.0;
 // Video profiles: picture size, frame rate, symbol rate (the width is 1.02 x the symbol rate) and modcod. The NUC-256 10/15 ones need about 18 dB,
 // the robust NUC-64 10/15 ones 13.5 dB (measured). The AV1 budgets match the picture quality (VMAF) of the first 1440p60 demo at 13 % fewer bits
 // (SVT-AV1 preset 2, key frame every 4 s; kavl/video/codec_search.sh). videoKbps() is the AV1 budget: the payload rate with 10 % headroom for the
-// variable bit rate, less 130 kbit/s for the sound and the packet overhead.
+// variable bit rate, less the profile's sound and packet overhead (112 + 18 kbit/s on the wide profiles).
 struct VideoProfile {
     const char* name;
     int width, height, fps;
     double symRate;
     int modcod;
+    // the sound and the packet overhead the video budget leaves room for, and how often a key frame comes
+    int soundKbps = 112;     // Opus
+    int soundChannels = 2;
+    int soundFrameMs = 20;   // Opus frame (and Ogg page) length; 60 ms on the narrow profiles (fewer packets, less overhead)
+    int overheadKbps = 18;   // packet headers (14 bytes each), the sound config and the clock
+    int keySec = 1;          // a key frame this often live (twice as long in an encoded file)
 };
-constexpr int kNumVideoProfiles = 10;
+constexpr int kNumVideoProfiles = 12;
 const VideoProfile& videoProfile(int i);   // 0 .. kNumVideoProfiles - 1 (clamped)
 // fecIdx: erasure protection (kavl_fec.h) takes its parity share off the budget.
 int videoKbps(const VideoProfile& p, int fecIdx = 0);

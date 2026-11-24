@@ -200,7 +200,9 @@ int main(int argc, char** argv) {
             const auto st = app.rx.stats();
             const auto ps = app.player.status();
             const double t = glfwGetTime() - t0;
-            const bool lk = app.rx.running() && st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < 0.5;
+            // a frame in the last 0.5 s (1.5 frame times on the narrow profiles, whose frames last 1.4-2.9 s)
+            const double win = st.profile >= 0 ? std::max(0.5, 1.5 * kavl::frameSeconds(kavl::videoProfile(st.profile).symRate)) : 0.5;
+            const bool lk = app.rx.running() && st.lastFrameSec >= 0 && st.streamSec - st.lastFrameSec < win;
             if (lk != locked) std::printf("EVENT t=%.2f %s\n", t, lk ? "locked" : "lock lost"), locked = lk;
             if (ps.shown != lastShown) lastShown = ps.shown, lastMove = t;
             const bool mv = t - lastMove < 0.4;

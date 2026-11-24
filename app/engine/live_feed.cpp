@@ -147,7 +147,7 @@ void listCaptureDevices(std::vector<CaptureDevice>& cameras, std::vector<Capture
     pclose(p);
 }
 
-bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int videoKbps, const std::string& overlay) {
+bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int videoKbps, const LiveEncode& enc, const std::string& overlay) {
     stop();
     {
         std::lock_guard<std::mutex> lk(m_);
@@ -217,14 +217,18 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
     const long px = static_cast<long>(width) * height * fps;
     // two steps faster than the sharpest real-time choice (the owner's call, 2026-11-24): 1440p30 measured 232% -> 93% of a core, VMAF about
     // 79 -> 77.7. SVT-AV1 maps anything above 11 to 11.
-    const char* preset = px <= 1920L * 1080 * 60 ? "9" : px <= 2560L * 1440 * 60 ? "10" : "11";
+    // a small picture (360p, 480p) costs little to encode and has few bits: a slower, sharper preset there
+    const char* preset = px <= 854L * 480 * 30 ? "7" : px <= 1920L * 1080 * 60 ? "9" : px <= 2560L * 1440 * 60 ? "10" : "11";
     args.insert(args.end(), vfilter.begin(), vfilter.end());
-    args.insert(args.end(), {"-map", vmap, "-c:v", "libsvtav1", "-preset", preset, "-b:v", bv, "-g", std::to_string(fps), "-svtav1-params",
+    args.insert(args.end(), {"-map", vmap, "-c:v", "libsvtav1", "-preset", preset, "-b:v", bv, "-g", std::to_string(fps * std::max(1, enc.keySec)), "-svtav1-params",
                              "lp=6:rtc=1:rc=2", "-bufsize", std::to_string(std::max(1, videoKbps / 4)) + "k", "-flush_packets", "1", "-f", "ivf", "pipe:3"});
     const bool sound = camera < 0 || mic >= 0;
     if (sound) {
-        args.insert(args.end(), {"-map", camera < 0 ? "1:a" : "0:a", "-c:a", "libopus", "-b:a", "112k", "-ac", "2", "-ar", "48000", "-application", "lowdelay",
-                                 "-frame_duration", "20", "-page_duration", "20000", "-flush_packets", "1", "-f", "ogg", "pipe:4"});
+        // speech-grade sound (the narrow profiles) uses Opus's voice mode; one Ogg page per Opus frame so each packet comes as it is made
+        args.insert(args.end(), {"-map", camera < 0 ? "1:a" : "0:a", "-c:a", "libopus", "-b:a", std::to_string(enc.soundKbps) + "k", "-ac",
+                                 std::to_string(enc.soundChannels), "-ar", "48000", "-application", enc.soundKbps <= 32 ? "voip" : "lowdelay", "-frame_duration",
+                                 std::to_string(enc.soundFrameMs), "-page_duration", std::to_string(enc.soundFrameMs * 1000), "-flush_packets", "1", "-f",
+                                 "ogg", "pipe:4"});
     }
     std::vector<char*> argv;
     for (auto& a : args) argv.push_back(a.data());

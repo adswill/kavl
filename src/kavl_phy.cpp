@@ -122,6 +122,10 @@ const VideoProfile& videoProfile(int i) {
         {"1440p60, 400 kHz", 2560, 1440, 60, 392000.0, 3},          {"1440p60 robust, 560 kHz", 2560, 1440, 60, 549000.0, 2},
         {"4K60, 650 kHz", 3840, 2160, 60, 637300.0, 3},             {"4K60 robust, 950 kHz", 3840, 2160, 60, 931400.0, 2},
         {"4K120, 870 kHz", 3840, 2160, 120, 852900.0, 3},           {"4K120 robust, 1.25 MHz", 3840, 2160, 120, 1225500.0, 2},
+        // narrow, NUC-64 10/15 (13.5 dB): speech-grade mono sound in 60 ms packets, a key frame every 4 s (a key frame each second would take a
+        // large share of so few bits). Frames last 1.43 s and 2.86 s on air, so the delay is a few seconds.
+        {"360p30, 24 kHz", 640, 360, 30, 24000.0 / 1.02, 2, 16, 1, 60, 6, 4},
+        {"360p15, 12 kHz", 640, 360, 15, 12000.0 / 1.02, 2, 12, 1, 60, 4, 4},
     };
     return t[std::clamp(i, 0, kNumVideoProfiles - 1)];
 }
@@ -130,7 +134,7 @@ int videoKbps(const VideoProfile& p, int fecIdx) {
     const Modcod* m = modcod(p.modcod);
     const fec::Profile f = fec::profile(fecIdx, m ? m->blocks : 1);
     const double share = f.parity > 0 ? static_cast<double>(f.data) / f.n() : 1.0;
-    return m ? static_cast<int>(netBitRate(*m, p.symRate) * share / 1.10 / 1000.0) - 130 : 0;
+    return m ? static_cast<int>(netBitRate(*m, p.symRate) * share / 1.10 / 1000.0) - p.soundKbps - p.overheadKbps : 0;
 }
 
 const Modcod* modcod(int id) {

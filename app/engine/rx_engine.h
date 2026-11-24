@@ -69,6 +69,7 @@ private:
     std::atomic<bool> retune_{false};
     int detect(double fs, double offset);   // the profile of the signal, -1 when stopped first
     double signalWidthHz();                 // the width of what stands out of the noise where the signal should be (spectrum), 0 if nothing
+    bool signalBand(double& widthHz, double& shiftHz);   // that width and how far the signal's middle is off (spectrum); false if nothing
 
     Player& player_;
     std::unique_ptr<IqSource> src_;

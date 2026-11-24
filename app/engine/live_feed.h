@@ -24,12 +24,20 @@ struct CaptureDevice {
 // The cameras and microphones AVFoundation offers (asks ffmpeg).
 void listCaptureDevices(std::vector<CaptureDevice>& cameras, std::vector<CaptureDevice>& microphones);
 
+// how the live programme is encoded beyond picture and rate (from the profile, kavl_phy.h)
+struct LiveEncode {
+    int keySec = 1;          // a key frame this often
+    int soundKbps = 112;     // Opus
+    int soundChannels = 2;
+    int soundFrameMs = 20;
+};
+
 class LiveFeed {
 public:
     ~LiveFeed() { stop(); }
     // camera < 0: a test pattern with a 1 kHz tone (no camera needed). mic < 0: no sound from the camera side (the test pattern has its tone).
     // overlay: a raw RGBA image of width x height laid over the picture (the callsign, callsign.h); empty = none
-    bool start(int camera, int mic, int width, int height, int fps, int videoKbps, const std::string& overlay = "");
+    bool start(int camera, int mic, int width, int height, int fps, int videoKbps, const LiveEncode& enc = {}, const std::string& overlay = "");
     void stop();
     bool running() const { return running_; }
     std::string error();

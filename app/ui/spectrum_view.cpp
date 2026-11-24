@@ -111,8 +111,8 @@ void SpectrumView::options() {
     }
 }
 
-// Signals: runs of bins at least 8 dB above the noise floor (its 20th percentile), small gaps bridged, at least 100 kHz wide (the narrowest KAVL
-// profile is 160 kHz); the six strongest are kept.
+// Signals: runs of bins at least 8 dB above the noise floor (its 20th percentile), small gaps bridged, at least 8 kHz wide (the narrowest KAVL
+// profile is 12 kHz); the six strongest are kept.
 void SpectrumView::findSignalsIn(const std::vector<float>& db, double fs) {
     found_.clear();
     const int n = static_cast<int>(db.size());
@@ -120,7 +120,7 @@ void SpectrumView::findSignalsIn(const std::vector<float>& db, double fs) {
     std::vector<float> sorted(db);
     std::nth_element(sorted.begin(), sorted.begin() + n / 5, sorted.end());
     const float floorDb = sorted[static_cast<size_t>(n / 5)], thr = floorDb + 8.f;
-    const int minBins = std::max(3, static_cast<int>(std::ceil(100e3 / fs * n)));
+    const int minBins = std::max(3, static_cast<int>(std::ceil(8e3 / fs * n)));
     for (int i = 0; i < n;) {
         if (db[static_cast<size_t>(i)] <= thr) {
             i++;

@@ -11,7 +11,7 @@ namespace kavl {
 
 class Resampler {
 public:
-    // halfTaps: half the filter length in input samples at equal rates (longer when decimating). False for a bad ratio.
+    // halfTaps: half the filter length in input samples at equal rates (longer when decimating). Any ratio; false for a rate of 0 or below.
     bool configure(double inRate, double outRate, int halfTaps = 16);
     void reset();
     // Appends the resampled samples of in[0..n) to out.

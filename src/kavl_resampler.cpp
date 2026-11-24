@@ -21,7 +21,7 @@ double besselI0(double x) {
 }  // namespace
 
 bool Resampler::configure(double inRate, double outRate, int halfTaps) {
-    if (inRate <= 0 || outRate <= 0 || outRate > 4.0 * inRate) return false;
+    if (inRate <= 0 || outRate <= 0) return false;   // any ratio: the narrow profiles upsample 20-50x to a radio's 2 Msps or more
     step_ = inRate / outRate;
     const double scale = std::min(1.0, outRate / inRate);   // < 1 when decimating: the filter must cut at the output's band edge
     half_ = std::max(4, static_cast<int>(std::ceil(halfTaps / scale)));

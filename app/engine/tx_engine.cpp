@@ -93,7 +93,8 @@ void TxEngine::encodeJob(std::string path, int profile, int fecIdx, std::string 
                                         " -map '[v]' -map '0:a?'";
     const std::string cmd = ff + " -hide_banner -nostats -loglevel error -y -i " + shellQuote(path) + video + " -c:v libsvtav1 -preset " +
                             std::to_string(preset) + " -b:v " + std::to_string(kbps) + "k -bufsize " + std::to_string(kbps * 3 / 2) + "k -g " +
-                            std::to_string(vp.fps * 2) + " -svtav1-params lp=6:rc=1:tune=0 -c:a libopus -b:a 112k -ac 2 -ar 48000 -progress pipe:1 " +
+                            std::to_string(vp.fps * 2 * vp.keySec) + " -svtav1-params lp=6:rc=1:tune=0 -c:a libopus -b:a " + std::to_string(vp.soundKbps) + "k -ac " +
+                            std::to_string(vp.soundChannels) + " -frame_duration " + std::to_string(vp.soundFrameMs) + " -ar 48000 -progress pipe:1 " +
                             shellQuote(mkv) + " 2>&1";
     say("Encoding " + std::filesystem::path(path).filename().string() + " for " + vp.name + " (AV1 " + std::to_string(kbps) + " kbit/s)...");
     FILE* p = popen(cmd.c_str(), "r");
@@ -134,7 +135,7 @@ void TxEngine::encodeJob(std::string path, int profile, int fecIdx, std::string 
     for (const auto& v : vids_) vBytes += static_cast<double>(v.data.size());
     char m[256];
     std::snprintf(m, sizeof(m), "Ready: %s, %.1f s, video %.2f Mbit/s, %s", vp.name, programmeMs_ / 1000.0, vBytes * 8 / (programmeMs_ / 1000.0) / 1e6,
-                  auds_.empty() ? "no sound" : "Opus stereo 112 kbit/s");
+                  auds_.empty() ? "no sound" : (std::string("Opus ") + (vp.soundChannels == 1 ? "mono " : "stereo ") + std::to_string(vp.soundKbps) + " kbit/s").c_str());
     say(m);
     progress_ = 1;
     ready_ = true;
@@ -162,7 +163,12 @@ bool TxEngine::startLive(const Dest& d, int profile, int fecIdx, int camera, int
     fec_ = fecIdx;
     const kavl::VideoProfile& vp = kavl::videoProfile(profile);
     // real-time AV1 is less efficient than the slow file encodes: the same budget, a softer picture
-    if (!feed_.start(camera, mic, vp.width, vp.height, std::min(vp.fps, fps), kavl::videoKbps(vp, fecIdx), overlay)) {
+    LiveEncode enc;
+    enc.keySec = vp.keySec;
+    enc.soundKbps = vp.soundKbps;
+    enc.soundChannels = vp.soundChannels;
+    enc.soundFrameMs = vp.soundFrameMs;
+    if (!feed_.start(camera, mic, vp.width, vp.height, std::min(vp.fps, fps), kavl::videoKbps(vp, fecIdx), enc, overlay)) {
         std::lock_guard<std::mutex> sl(stMtx_);
         st_.message = feed_.error();
         return false;
@@ -307,7 +313,8 @@ void TxEngine::modulateLoop(Dest d) {
         std::vector<uint8_t> hdr(44, 0);
         std::fwrite(hdr.data(), 1, hdr.size(), wav);   // written properly at the end
     }
-    const double frameMs = kavl::frameSeconds(vp.symRate) * 1000.0, leadMs = 3000.0;   // 3 s ahead: a protection group must arrive whole
+    const double frameMs = kavl::frameSeconds(vp.symRate) * 1000.0;
+    const double leadMs = std::max(3000.0, 3.0 * frameMs);   // 3 s ahead (3 frames on the narrow profiles): a protection group must arrive whole
     const int H = kavl::kRrcSpan / 2 + 2;   // symbols of overlap on each side for the pulse shaping
     kavl::av::Muxer mux(mc, fec_);
     kavl::Transmitter tx(mc.id);
@@ -392,11 +399,12 @@ void TxEngine::modulateLoop(Dest d) {
         n++;
         return kavl::frameSymbols(mc, h, pay.data());
     };
-    // Live to a radio (or the loopback): low delay. Each frame is made only when the radio's queue runs low (0.1 s left), from what the encoder has
+    // Live to a radio (or the loopback): low delay. Each frame is made only when the radio's queue runs low (0.1 s left; 15 % of a frame on the
+    // narrow profiles, whose 1.4-2.9 s frames take longer to shape and resample to the radio's rate), from what the encoder has
     // given by then, and shaped without waiting for the next frame: every frame starts with the same preamble (longer than H), so the next one's
     // first H symbols are known already.
     const bool lowDelay = live_ && !wav;
-    const size_t ringTarget = static_cast<size_t>(rate * 2 * (lowDelay ? 0.1 : 0.3));
+    const size_t ringTarget = static_cast<size_t>(rate * 2 * (lowDelay ? std::max(0.1, 0.15 * frameMs / 1000.0) : 0.3));
     if (!lowDelay) cur = makeFrame();
     const auto t0 = std::chrono::steady_clock::now();
     while (!quit_) {

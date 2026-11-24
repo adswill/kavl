@@ -1,6 +1,6 @@
 # KAVL
 
-Narrow-band digital video for radio: 720p60 to 4K120 with stereo sound, in 160 kHz to 1.25 MHz.
+Narrow-band digital video for radio: 360p15 in 12 kHz up to 4K120 with stereo sound in 1.25 MHz.
 
 The KAVL app receives a KAVL signal from an RTL-SDR, a HackRF or an IQ recording and plays the picture and the sound. It also encodes a video file and transmits it with a HackRF, or writes the signal to an IQ file.
 
@@ -29,6 +29,15 @@ Each profile has a normal and a robust form. The signal needed is Es/N0, the sig
 | 4K120 | 870 kHz | 18 dB | 1.25 MHz | 13.5 dB |
 
 Video is AV1, sound is Opus stereo at 48 kHz and 112 kbit/s. The video budget of each profile gives the same picture quality (VMAF) at every size: SVT-AV1 preset 2 with a key frame every 4 s.
+
+Two narrow profiles go much further on little power, with NUC-64 10/15 (13.5 dB) and speech-grade mono sound:
+
+| Profile | Width | Signal needed | Video | Sound | Delay | Picture after tuning |
+|---|---|---|---|---|---|---|
+| 360p30 | 24 kHz | 13.5 dB | 60 kbit/s | Opus mono 16 kbit/s | about 3.3 s | about 4 s |
+| 360p15 | 12 kHz | 13.5 dB | 25 kbit/s | Opus mono 12 kbit/s | about 6.5 s | about 7 s |
+
+Their frames last 1.4 s and 2.9 s on air, which sets the delay. A key frame comes every 4 s (more often would eat too much of so few bits). The receiver finds a narrow signal up to 20 kHz off its frequency, using the spectrum; picture quality at these rates is soft, best for faces and slow scenes.
 
 ## Requirements
 
