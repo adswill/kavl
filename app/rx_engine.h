@@ -9,7 +9,9 @@
 #include "kavl/kavl_av.h"
 #include "kavl/kavl_rx.h"
 
+#include <atomic>
 #include <condition_variable>
+#include <cstdio>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -40,6 +42,12 @@ public:
     // Power spectrum of the input (dB, kSpecBins bins from -fs/2 to +fs/2), its sample rate and the offset of the signal.
     static constexpr int kSpecBins = 1024;
     bool spectrum(std::vector<float>& db, double& fs, double& offsetHz);
+    // Recording what the receiver gets (after the shift back to the middle): a 16-bit IQ .wav at the source's rate.
+    bool startRecording(const std::string& path);
+    void stopRecording();
+    bool recording() const { return rec_ != nullptr; }
+    double recordedSec() const { return recSamples_ / (fs_ > 0 ? fs_ : 1.0); }
+    const std::string& recordingPath() const { return recPath_; }
 
 private:
     void onSamples(const kavl::cf* x, size_t n);
@@ -59,6 +67,10 @@ private:
     Stats st_;
     std::vector<kavl::cf> const_;
     std::vector<float> spec_;
+    std::mutex recMtx_;
+    FILE* rec_ = nullptr;
+    std::string recPath_;
+    std::atomic<long long> recSamples_{0};
     std::vector<kavl::cf> specBuf_;
     double specFill_ = 0;
 };

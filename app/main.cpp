@@ -27,6 +27,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -469,6 +470,33 @@ void receivePanel(App& a, float leftW, float contentH) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.46f, 0.55f, 1));
         if (ImGui::Button("Stop", ImVec2(-1, 0))) a.rx.stop();
         ImGui::PopStyleColor();
+    }
+    if (run) {   // recording what the receiver gets, for a later look (the frequency goes into the file name)
+        if (!a.rx.recording()) {
+            if (ImGui::Button("Record IQ", ImVec2(-1, 0))) {
+                const std::string dir = std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/Documents/KAVL";
+                std::error_code ec;
+                std::filesystem::create_directories(dir, ec);
+                char name[160];
+                const std::time_t now = std::time(nullptr);
+                std::strftime(name, sizeof(name), "%Y%m%d_%H%M%S", std::localtime(&now));
+                const std::string path = dir + "/kavl_rec_" + std::to_string(static_cast<long long>(std::llround(a.freqMHz * 1e6))) + "Hz_" + name + ".wav";
+                if (!a.rx.startRecording(path)) a.rxError = "Could not start the recording";
+            }
+            ImGui::SetItemTooltip("Saves what the receiver gets as an IQ .wav in Documents/KAVL");
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, pal::badRed());
+            char lbl[64];
+            std::snprintf(lbl, sizeof(lbl), "Stop recording (%.0f s, %.0f MB)", a.rx.recordedSec(), a.rx.recordedSec() * a.rx.source()->sampleRate() * 4 / 1e6);
+            if (ImGui::Button(lbl, ImVec2(-1, 0))) a.rx.stopRecording();
+            ImGui::PopStyleColor();
+        }
+        if (!a.rx.recordingPath().empty() && !a.rx.recording()) {
+            if (ImGui::SmallButton("Show the recording in Finder")) {
+                const std::string cmd = "open -R '" + a.rx.recordingPath() + "'";
+                std::system(cmd.c_str());
+            }
+        }
     }
     if (!a.rxError.empty()) ImGui::TextColored(pal::badRed(), "%s", a.rxError.c_str());
     ImGui::Separator();

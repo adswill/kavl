@@ -5,6 +5,7 @@
 #include "rx_engine.h"
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 
 bool RxEngine::start(std::unique_ptr<IqSource> src, int profile) {
@@ -53,6 +54,7 @@ bool RxEngine::start(std::unique_ptr<IqSource> src, int profile) {
 }
 
 void RxEngine::stop() {
+    stopRecording();
     if (src_) src_->stop();
     {
         std::lock_guard<std::mutex> lk(qMtx_);
@@ -136,6 +138,18 @@ void RxEngine::worker(int profile, double fs, double offset) {
         }
         n0 += static_cast<long long>(chunk.size());
         const double t = static_cast<double>(n0) / fs;
+        {
+            std::lock_guard<std::mutex> rl(recMtx_);
+            if (rec_) {
+                std::vector<int16_t> s(chunk.size() * 2);
+                for (size_t i = 0; i < chunk.size(); i++) {
+                    s[2 * i] = static_cast<int16_t>(std::lround(std::clamp(chunk[i].real() * 32767.f, -32768.f, 32767.f)));
+                    s[2 * i + 1] = static_cast<int16_t>(std::lround(std::clamp(chunk[i].imag() * 32767.f, -32768.f, 32767.f)));
+                }
+                std::fwrite(s.data(), 2, s.size(), rec_);
+                recSamples_ += static_cast<long long>(chunk.size());
+            }
+        }
         const auto frames = rx.push(chunk.data(), chunk.size());
         for (const auto& f : frames) demux.pushFrame(f);
         player_.push(demux.take());
@@ -182,4 +196,50 @@ bool RxEngine::spectrum(std::vector<float>& db, double& fs, double& offsetHz) {
     fs = fs_;
     offsetHz = offset_;
     return true;
+}
+
+namespace {
+void put32(FILE* f, uint32_t v) {
+    const uint8_t b[4] = {static_cast<uint8_t>(v), static_cast<uint8_t>(v >> 8), static_cast<uint8_t>(v >> 16), static_cast<uint8_t>(v >> 24)};
+    std::fwrite(b, 1, 4, f);
+}
+void put16(FILE* f, uint16_t v) {
+    const uint8_t b[2] = {static_cast<uint8_t>(v), static_cast<uint8_t>(v >> 8)};
+    std::fwrite(b, 1, 2, f);
+}
+void wavHeader(FILE* f, uint32_t rate, uint32_t dataBytes) {
+    std::fseek(f, 0, SEEK_SET);
+    std::fwrite("RIFF", 1, 4, f);
+    put32(f, 36 + dataBytes);
+    std::fwrite("WAVEfmt ", 1, 8, f);
+    put32(f, 16);
+    put16(f, 1);
+    put16(f, 2);
+    put32(f, rate);
+    put32(f, rate * 4);
+    put16(f, 4);
+    put16(f, 16);
+    std::fwrite("data", 1, 4, f);
+    put32(f, dataBytes);
+}
+}  // namespace
+
+bool RxEngine::startRecording(const std::string& path) {
+    std::lock_guard<std::mutex> rl(recMtx_);
+    if (rec_ || fs_ <= 0) return false;
+    rec_ = std::fopen(path.c_str(), "wb");
+    if (!rec_) return false;
+    wavHeader(rec_, static_cast<uint32_t>(std::lround(fs_)), 0);
+    recPath_ = path;
+    recSamples_ = 0;
+    return true;
+}
+
+void RxEngine::stopRecording() {
+    std::lock_guard<std::mutex> rl(recMtx_);
+    if (!rec_) return;
+    const long long n = recSamples_;
+    wavHeader(rec_, static_cast<uint32_t>(std::lround(fs_)), static_cast<uint32_t>(std::min<long long>(n * 4, 0xFFFFFFF0LL)));
+    std::fclose(rec_);
+    rec_ = nullptr;
 }
