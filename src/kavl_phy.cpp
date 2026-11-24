@@ -168,23 +168,35 @@ void demapSoft(const Modcod& m, const cf* sym, size_t n, float n0, float* llr) {
         pr[static_cast<size_t>(i)] = pts[static_cast<size_t>(i)].real();
         pi[static_cast<size_t>(i)] = pts[static_cast<size_t>(i)].imag();
     }
+    // Max-log: for each bit the nearest point with that bit 0 and with it 1. A min tree from the lowest bit up: the lowest bit's two minima are
+    // those of the even and the odd labels; the pairwise minima form a half-size array whose lowest bit is the next bit, and so on (about 3 M
+    // comparisons instead of eta M). The squared distances are compared as uint32: non-negative floats order like their bits, and integer
+    // minima vectorise. The results are exactly those of the direct search (test_kavl_phy checks it).
     parallelFor(static_cast<long>(n), kWorkThreads, [&](long lo, long hi) {
     std::vector<float> d(static_cast<size_t>(M));
+    std::vector<uint32_t> a(static_cast<size_t>(M)), b(static_cast<size_t>(M / 2 + 1));
     for (size_t s = static_cast<size_t>(lo); s < static_cast<size_t>(hi); s++) {
         const float cr = sym[s].real(), ci = sym[s].imag();
         for (int i = 0; i < M; i++) {
-            const float a = cr - pr[static_cast<size_t>(i)], b = ci - pi[static_cast<size_t>(i)];
-            d[static_cast<size_t>(i)] = a * a + b * b;
+            const float x = cr - pr[static_cast<size_t>(i)], y = ci - pi[static_cast<size_t>(i)];
+            d[static_cast<size_t>(i)] = x * x + y * y;
         }
-        for (int k = 0; k < eta; k++) {
-            const int blk = M >> (k + 1);   // labels with bit k at 0 and at 1 alternate in runs of blk
-            float m0 = 1e30f, m1 = 1e30f;
-            for (int base = 0; base < M; base += 2 * blk)
-                for (int i = 0; i < blk; i++) {
-                    m0 = std::min(m0, d[static_cast<size_t>(base + i)]);
-                    m1 = std::min(m1, d[static_cast<size_t>(base + blk + i)]);
-                }
-            llr[s * static_cast<size_t>(eta) + static_cast<size_t>(k)] = (m1 - m0) * inv;
+        std::memcpy(a.data(), d.data(), sizeof(float) * static_cast<size_t>(M));
+        uint32_t* cur = a.data();
+        uint32_t* nxt = b.data();
+        for (int k = eta - 1, L = M; k >= 0; k--, L >>= 1) {   // k: the bit (0 = the first transmitted), from the last
+            uint32_t m0 = ~0u, m1 = ~0u;
+            for (int j = 0; j < L / 2; j++) {
+                const uint32_t e = cur[2 * j], o = cur[2 * j + 1];
+                m0 = std::min(m0, e);
+                m1 = std::min(m1, o);
+                nxt[j] = std::min(e, o);
+            }
+            float f0, f1;
+            std::memcpy(&f0, &m0, sizeof(f0));
+            std::memcpy(&f1, &m1, sizeof(f1));
+            llr[s * static_cast<size_t>(eta) + static_cast<size_t>(k)] = (f1 - f0) * inv;
+            std::swap(cur, nxt);
         }
     }
     });

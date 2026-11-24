@@ -18,6 +18,37 @@ static int fails = 0;
         }                                                                 \
     } while (0)
 
+// The soft demapper (a min tree over the labels) gives exactly the LLRs of the direct max-log search, for every modcod.
+static void testDemapExact() {
+    kavl::XorShift64 r{2026};
+    for (int id = 0; id < kNumModcods; id++) {
+        const Modcod& m = *modcod(id);
+        const auto& pts = constellation(m);
+        const int eta = m.bitsPerSym, M = 1 << eta;
+        const size_t n = 2000;
+        std::vector<cf> sym(n);
+        for (auto& s : sym) {
+            const double u1 = (r.next() >> 11) * (1.0 / 9007199254740992.0), u2 = (r.next() >> 11) * (1.0 / 9007199254740992.0);
+            s = pts[r.next() % pts.size()] + cf(static_cast<float>(0.3 * (u1 - 0.5)), static_cast<float>(0.3 * (u2 - 0.5)));
+        }
+        std::vector<float> got(n * static_cast<size_t>(eta));
+        demapSoft(m, sym.data(), n, 0.02f, got.data());
+        long diff = 0;
+        for (size_t s = 0; s < n; s++)
+            for (int k = 0; k < eta; k++) {
+                float m0 = 1e30f, m1 = 1e30f;
+                for (int i = 0; i < M; i++) {
+                    const float a = sym[s].real() - pts[static_cast<size_t>(i)].real(), b = sym[s].imag() - pts[static_cast<size_t>(i)].imag();
+                    const float d = a * a + b * b;
+                    if ((i >> (eta - 1 - k)) & 1) m1 = std::min(m1, d);
+                    else m0 = std::min(m0, d);
+                }
+                if (got[s * static_cast<size_t>(eta) + static_cast<size_t>(k)] != (m1 - m0) * (1.f / 0.02f)) diff++;
+            }
+        CHECK(diff == 0);
+    }
+}
+
 static void testLayout() {
     CHECK(kRegionSyms == static_cast<int>(regionMap().pilot.size() + regionMap().data.size()));
     CHECK(static_cast<int>(regionMap().pilot.size()) == kPilots);
@@ -108,6 +139,7 @@ static void testNoiseOnly() {
 }
 
 int main() {
+    testDemapExact();
     testLayout();
     testHeader();
     testInterleaver();
