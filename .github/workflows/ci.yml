@@ -1,0 +1,18 @@
+# Copyright (c) 2026 Kristijonas Adomaitis (adswill). All rights reserved.
+# Use is governed by the KAVL Source Licence (LICENSE).
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: brew install ninja glfw dav1d opus hackrf libusb
+      - name: Build
+        run: cmake -S . -B build -G Ninja && cmake --build build
+      - name: Tests
+        run: ctest --test-dir build --output-on-failure -E thresholds

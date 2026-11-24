@@ -1,0 +1,13 @@
+KAVL
+Copyright (c) 2026 Kristijonas Adomaitis (adswill). All rights reserved.
+
+The KAVL signal format (frames, preamble, pilots, header, code-word layout and the audio/video packet layer), the receiver, the transmitter,
+the app and their documentation are the author's own work. The LDPC codes and the non-uniform constellations are those of ATSC 3.0 (A/322),
+from the author's own tables.
+
+Use is governed by the KAVL Source Licence in LICENSE. Copying, redistributing, porting to another language, or publishing changed versions
+is not permitted without written permission. This NOTICE and the copyright lines in each file must be kept.
+
+Third-party parts and their licences: THIRD_PARTY.md.
+
+Source: https://github.com/adswill/kavl

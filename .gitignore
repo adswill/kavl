@@ -1,0 +1,6 @@
+build/
+*.wav
+*.ivf
+*.ogg
+*.mkv
+.DS_Store
