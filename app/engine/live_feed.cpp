@@ -212,12 +212,14 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
         vmap = "[v]";
     }
     const std::string bv = std::to_string(videoKbps) + "k";
-    // SVT-AV1 real-time mode (rtc=1, CBR): it holds the bit rate (the plain low-delay CBR overshot 2x at 1440p). The slowest preset per size that
-    // still runs at least twice real time on an M2 Pro (measured 1440p: preset 6 58 fps, 8 120 fps, 10 177 fps; slower = sharper).
+    // SVT-AV1 real-time mode (rtc=1, CBR): it holds the bit rate (the plain low-delay CBR overshot 2x at 1440p). A key frame every second, so a
+    // receiver that tunes in shows a picture within about a second.
     const long px = static_cast<long>(width) * height * fps;
-    const char* preset = px <= 1920L * 1080 * 60 ? "7" : px <= 2560L * 1440 * 60 ? "8" : px <= 3840L * 2160 * 60 ? "10" : "11";
+    // two steps faster than the sharpest real-time choice (the owner's call, 2026-11-24): 1440p30 measured 232% -> 93% of a core, VMAF about
+    // 79 -> 77.7. SVT-AV1 maps anything above 11 to 11.
+    const char* preset = px <= 1920L * 1080 * 60 ? "9" : px <= 2560L * 1440 * 60 ? "10" : "11";
     args.insert(args.end(), vfilter.begin(), vfilter.end());
-    args.insert(args.end(), {"-map", vmap, "-c:v", "libsvtav1", "-preset", preset, "-b:v", bv, "-g", std::to_string(fps * 2), "-svtav1-params",
+    args.insert(args.end(), {"-map", vmap, "-c:v", "libsvtav1", "-preset", preset, "-b:v", bv, "-g", std::to_string(fps), "-svtav1-params",
                              "lp=6:rtc=1:rc=2", "-bufsize", std::to_string(std::max(1, videoKbps / 4)) + "k", "-flush_packets", "1", "-f", "ivf", "pipe:3"});
     const bool sound = camera < 0 || mic >= 0;
     if (sound) {

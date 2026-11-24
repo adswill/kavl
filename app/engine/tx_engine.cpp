@@ -93,7 +93,7 @@ void TxEngine::encodeJob(std::string path, int profile, int fecIdx, std::string 
                                         " -map '[v]' -map '0:a?'";
     const std::string cmd = ff + " -hide_banner -nostats -loglevel error -y -i " + shellQuote(path) + video + " -c:v libsvtav1 -preset " +
                             std::to_string(preset) + " -b:v " + std::to_string(kbps) + "k -bufsize " + std::to_string(kbps * 3 / 2) + "k -g " +
-                            std::to_string(vp.fps * 4) + " -svtav1-params lp=6:rc=1:tune=0 -c:a libopus -b:a 112k -ac 2 -ar 48000 -progress pipe:1 " +
+                            std::to_string(vp.fps * 2) + " -svtav1-params lp=6:rc=1:tune=0 -c:a libopus -b:a 112k -ac 2 -ar 48000 -progress pipe:1 " +
                             shellQuote(mkv) + " 2>&1";
     say("Encoding " + std::filesystem::path(path).filename().string() + " for " + vp.name + " (AV1 " + std::to_string(kbps) + " kbit/s)...");
     FILE* p = popen(cmd.c_str(), "r");
