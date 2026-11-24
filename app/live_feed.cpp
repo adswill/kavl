@@ -197,7 +197,9 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
     } else {
         char rate[32];
         std::snprintf(rate, sizeof(rate), "%.6f", cam.fps);
-        args.insert(args.end(), {"-f", "avfoundation", "-framerate", rate, "-video_size", std::to_string(cam.w) + "x" + std::to_string(cam.h), "-i",
+        // no probing and no input buffering: the camera's own parameters are known, and every frame should go to the encoder at once
+        args.insert(args.end(), {"-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0", "-f", "avfoundation", "-framerate",
+                                 rate, "-video_size", std::to_string(cam.w) + "x" + std::to_string(cam.h), "-i",
                                  std::to_string(camera) + ":" + (mic >= 0 ? std::to_string(mic) : std::string("none"))});
     }
     const std::string bv = std::to_string(videoKbps) + "k";
@@ -375,6 +377,7 @@ void LiveFeed::readAudio(int fd) {
     uint8_t tmp[16384];
     int n = 0, preSkip = 0;
     long long samples = 0;
+    bool timed = false;   // the first sound page set the time line from its granule position (the microphone may start later than the camera)
     for (;;) {
         const ssize_t r = read(fd, tmp, sizeof(tmp));
         if (r <= 0) break;
@@ -390,6 +393,23 @@ void LiveFeed::readAudio(int fd) {
             size_t data = pos + 27 + static_cast<size_t>(nseg), total = 0;
             for (int s = 0; s < nseg; s++) total += buf[pos + 27 + static_cast<size_t>(s)];
             if (data + total > buf.size()) break;
+            uint64_t granule = 0;
+            for (int b = 7; b >= 0; b--) granule = (granule << 8) | buf[pos + 6 + static_cast<size_t>(b)];
+            if (!timed && n >= 2 && pk.empty() && granule != ~0ull) {   // the end of this page in samples, less the packets that end on it
+                long long inPage = 0;
+                size_t at = data, len = 0;
+                for (int s = 0; s < nseg; s++) {
+                    const int l = buf[pos + 27 + static_cast<size_t>(s)];
+                    len += static_cast<size_t>(l);
+                    if (l < 255) {
+                        inPage += kavl::media::opusSamples(std::vector<uint8_t>(buf.begin() + static_cast<long>(at), buf.begin() + static_cast<long>(at + len)));
+                        at += len;
+                        len = 0;
+                    }
+                }
+                samples = std::max(0LL, static_cast<long long>(granule) - inPage);
+                timed = true;
+            }
             for (int s = 0; s < nseg; s++) {
                 const int l = buf[pos + 27 + static_cast<size_t>(s)];
                 pk.insert(pk.end(), buf.begin() + static_cast<long>(data), buf.begin() + static_cast<long>(data) + l);
