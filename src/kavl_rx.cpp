@@ -439,14 +439,23 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
         f += pb / kTwoPi;
     }
     pilotGains();
+    // Weak signals: a code word that fails with the pilots averaged over +-8 is tried again with +-16 (+-24 under 0 dB, by the preamble's estimate).
+    // The wide window gives a quieter reference at the very edge (QPSK 3/15 at -3.5 dB: 110 of 120 code words against 85) but follows the phase
+    // more slowly, so it alone loses a few a little higher up; the retry keeps both.
+    const double snrPre = 1.0 / nvPre;   // Es/N0 from the preamble (linear)
     const int W = std::max(1, o.pilotSmooth);
+    const int Wwide = snrPre < 1.0 ? std::max(W, 24) : std::max(W, 16);   // for a retry of failed code words (below)
     const auto gs = smooth(g, W);
+    // the noise from the narrow window: a wide one cannot follow the remaining phase drift, and its residuals read as noise (2 dB too much at
+    // -3 dB, which scaled every LLR too small)
+    const int Wn = std::max(1, o.pilotSmooth);
+    const auto gn = Wn == W ? gs : smooth(g, Wn);
     double nvAbs = 0, sig = 0;
     for (int i = 0; i < kPilots; i++) {
-        nvAbs += std::norm(g[static_cast<size_t>(i)] - gs[static_cast<size_t>(i)]);
+        nvAbs += std::norm(g[static_cast<size_t>(i)] - gn[static_cast<size_t>(i)]);
         sig += std::norm(gs[static_cast<size_t>(i)]);
     }
-    nvAbs = nvAbs / kPilots * (2.0 * W + 1.0) / (2.0 * W);
+    nvAbs = nvAbs / kPilots * (2.0 * Wn + 1.0) / (2.0 * Wn);
     sig /= kPilots;
     double n0 = std::max(1e-5, nvAbs / std::max(1e-20, sig));
     rf.esn0Db = 10.0 * std::log10(1.0 / n0);
@@ -457,13 +466,16 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
         const int k = kRegionStart + r;
         yRaw[static_cast<size_t>(r)] = at(T(k)) * rot(f, k);
     }
-    for (int i = 0; i + 1 < kPilots; i++) {
-        const int r0 = rm.pilot[static_cast<size_t>(i)], r1 = rm.pilot[static_cast<size_t>(i + 1)];
-        for (int r = r0; r <= r1; r++) {
-            const float u = static_cast<float>(r - r0) / static_cast<float>(r1 - r0);
-            gain[static_cast<size_t>(r)] = gs[static_cast<size_t>(i)] * (1.f - u) + gs[static_cast<size_t>(i + 1)] * u;
+    auto setGain = [&](const std::vector<cf>& gx) {
+        for (int i = 0; i + 1 < kPilots; i++) {
+            const int r0 = rm.pilot[static_cast<size_t>(i)], r1 = rm.pilot[static_cast<size_t>(i + 1)];
+            for (int r = r0; r <= r1; r++) {
+                const float u = static_cast<float>(r - r0) / static_cast<float>(r1 - r0);
+                gain[static_cast<size_t>(r)] = gx[static_cast<size_t>(i)] * (1.f - u) + gx[static_cast<size_t>(i + 1)] * u;
+            }
         }
-    }
+    };
+    setGain(gs);
 
     // 4. demap + decode
     const int nBits = mc->blocks * kLdpcN;
@@ -513,6 +525,18 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
     };
     equalise();
     int okCount = decodeBlocks();
+    if (o.pilotAdapt && okCount < mc->blocks && snrPre < 2.0 && Wwide > W) {   // the retry with the wide window (only the failed code words)
+        const int before = okCount;
+        const auto hardNarrow = hard;
+        setGain(smooth(g, Wwide));
+        equalise();
+        okCount = decodeBlocks();
+        if (okCount == before) {   // no help: the decision-directed passes below start from the narrow window and its decisions, as without it
+            hard = hardNarrow;
+            setGain(gs);
+            equalise();
+        }
+    }
 
     // decisions of the whole frame (decoder output; exact for the code words that passed) -> data symbols
     auto decisions = [&]() {

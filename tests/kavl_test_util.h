@@ -136,6 +136,7 @@ inline RunResult runLink(int m, int frames, const Channel& c, uint64_t seed, int
     if (const char* w = std::getenv("KAVL_W")) o.pilotSmooth = std::atoi(w);      // experiments
     if (const char* l = std::getenv("KAVL_L")) o.ddWindow = std::atoi(l);
     if (const char* it = std::getenv("KAVL_I")) o.maxIter = std::atoi(it);
+    if (const char* pa = std::getenv("KAVL_PA")) o.pilotAdapt = std::atoi(pa) != 0;
     kavl::Receiver rx(o);
     RunResult res;
     res.framesSent = frames;

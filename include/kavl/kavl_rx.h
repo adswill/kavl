@@ -51,6 +51,7 @@ public:
         float detect = 0.12f;       // differential preamble metric threshold (0..1; about 0.17 at -6 dB, 0.035 on noise)
         int maxIter = 40;           // LDPC iterations
         bool ddPass = true;
+        bool pilotAdapt = true;     // weak frames (preamble SNR under 3 dB) average over +-16 / +-24 pilots
         int pilotSmooth = 8;        // pilot gains are averaged over +-pilotSmooth pilots (wider: less noise in the estimate, slower phase tracking)
         int ddWindow = 12;          // decision-directed gain: least squares over +-ddWindow symbols
         bool headerOnly = false;    // stop after the header (finding the profile of a signal): blocks stay empty
