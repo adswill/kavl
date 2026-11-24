@@ -127,7 +127,7 @@ struct App {
     int srcKind = 0;   // 0 IQ file, 1 RTL-SDR, 2 HackRF
     std::string iqPath;
     double freqMHz = 433.0;
-    int profile = 4;
+    int profile = -1;   // -1 = Auto
     std::string rxError;
     float volume = 1.f;
     RtlSettings rtl;
@@ -161,7 +161,7 @@ void loadSettings(App& a) {
     a.srcKind = static_cast<int>(c.num("rx.source", 0));
     a.iqPath = c.str("rx.file");
     a.freqMHz = c.num("rx.freqMHz", 433.0);
-    a.profile = std::clamp(static_cast<int>(c.num("rx.profile", 4)), 0, kavl::kNumVideoProfiles - 1);
+    a.profile = std::clamp(static_cast<int>(c.num("rx.profile", -1)), -1, kavl::kNumVideoProfiles - 1);   // -1 = Auto
     a.volume = static_cast<float>(c.num("rx.volume", 1.0));
     a.rtl.remote = c.flag("rtl.remote", false);
     std::snprintf(a.rtlHost, sizeof(a.rtlHost), "%s", c.str("rtl.host", "127.0.0.1").c_str());
@@ -250,8 +250,8 @@ void updateWaterfall(App& a) {
 
 void startRx(App& a) {
     a.rxError.clear();
-    const auto& vp = kavl::videoProfile(a.profile);
-    const double width = kavl::occupiedHz(vp.symRate);
+    // the width only places the radio's DC spike: with Auto, that of the 400 kHz profiles
+    const double width = a.profile >= 0 ? kavl::occupiedHz(kavl::videoProfile(a.profile).symRate) : 400e3;
     std::unique_ptr<IqSource> src;
     if (a.srcKind == 0) {
         if (a.iqPath.empty()) {
@@ -359,8 +359,8 @@ void drawSpectrum(App& a, ImVec2 size) {
     dl->AddRect(p0, s1, ImGui::GetColorU32(pal::plotBorder()));
     for (int g = 1; g < 6; g++) dl->AddLine(ImVec2(p0.x, p0.y + specH * g / 6.f), ImVec2(s1.x, p0.y + specH * g / 6.f), ImGui::GetColorU32(pal::plotGrid()));
     if (!a.spec.empty() && a.specFs > 0) {
-        const auto& vp = kavl::videoProfile(a.profile);
-        const double half = kavl::occupiedHz(vp.symRate) / 2.0;
+        const int shown = a.profile >= 0 ? a.profile : a.rx.stats().profile;
+        const double half = shown >= 0 ? kavl::occupiedHz(kavl::videoProfile(shown).symRate) / 2.0 : 0.0;
         auto xOf = [&](double hz) { return p0.x + static_cast<float>((hz / a.specFs + 0.5) * size.x); };
         dl->AddRectFilled(ImVec2(xOf(-a.specOff - half), p0.y), ImVec2(xOf(-a.specOff + half), s1.y), ImGui::GetColorU32(pal::accent(0.10f)));
         std::vector<ImVec2> line(a.spec.size());
@@ -461,8 +461,16 @@ void receivePanel(App& a, float leftW, float contentH) {
     ImGui::SetNextItemWidth(-1);
     if (ImGui::Combo("##src", &a.srcKind, "IQ file\0RTL-SDR (rtl_tcp)\0HackRF\0") && a.srcKind > 0) refreshDevices(a);
     ImGui::SetNextItemWidth(-1);
-    ImGui::Combo("##prof", &a.profile, [](void*, int i) { return kavl::videoProfile(i).name; }, nullptr, kavl::kNumVideoProfiles);
+    int sel = a.profile + 1;   // 0 = Auto
+    if (ImGui::Combo("##prof", &sel, [](void*, int i) { return i == 0 ? "Auto (find the profile)" : kavl::videoProfile(i - 1).name; }, nullptr,
+                     kavl::kNumVideoProfiles + 1))
+        a.profile = sel - 1;
     if (run) ImGui::EndDisabled();
+    if (a.profile < 0 && run) {
+        const auto ds = a.rx.stats();
+        if (ds.profile >= 0) ImGui::TextColored(pal::okGreen(), "Auto: %s", kavl::videoProfile(ds.profile).name);
+        else ImGui::TextColored(pal::warnAmber(), "Auto: looking at every profile...");
+    }
     radioSettings(a);
     if (!run) {
         if (ImGui::Button("Start", ImVec2(-1, 0))) startRx(a);

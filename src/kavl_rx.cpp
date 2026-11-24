@@ -257,6 +257,11 @@ bool Receiver::Impl::decodeFrame(double t0, double f0, RxFrame& rf, double& endT
     const Modcod* mc = modcod(rf.hdr.modcod);
     if (!mc) return false;
     rf.mc = mc;
+    if (o.headerOnly) {
+        rf.cfoHz = (f0 + f) * o.symRate;
+        endT = T(kFrameSyms);
+        return true;
+    }
 
     // 3. clock drift from the next frame's preamble (exact: no data around it), else the last frame's
     bool haveDrift = false;

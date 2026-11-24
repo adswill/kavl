@@ -23,6 +23,7 @@ class RxEngine {
 public:
     explicit RxEngine(Player& player) : player_(player) {}
     ~RxEngine() { stop(); }
+    // profile -1: find it (one header-only detector per symbol rate on the first seconds, then the profile with that rate and modcod)
     bool start(std::unique_ptr<IqSource> src, int profile);
     void stop();
     bool running() const { return running_; }
@@ -32,6 +33,8 @@ public:
     struct Stats {
         long frames = 0, codeWords = 0, codeWordsOk = 0, lost = 0, rebuilt = 0;
         int fec = 0;
+        int profile = -1;          // the profile in use (-1 while still looking)
+        bool detecting = false;
         double esn0 = 0, mer = 0, cfo = 0, ppm = 0;
         double streamSec = 0, lastFrameSec = -1, droppedSec = 0, speed = 0;
         const kavl::Modcod* mc = nullptr;
@@ -52,6 +55,7 @@ public:
 private:
     void onSamples(const kavl::cf* x, size_t n);
     void worker(int profile, double fs, double offset);
+    int detect(double fs, double offset);   // the profile of the signal, -1 when stopped first
 
     Player& player_;
     std::unique_ptr<IqSource> src_;

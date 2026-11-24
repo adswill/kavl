@@ -5,6 +5,7 @@
 #include "rx_engine.h"
 
 #include <chrono>
+#include <thread>
 #include <algorithm>
 #include <cmath>
 
@@ -106,7 +107,75 @@ void RxEngine::onSamples(const kavl::cf* x, size_t n) {
     qCv_.notify_one();
 }
 
+int RxEngine::detect(double fs, double offset) {
+    // the distinct symbol rates of the profiles
+    std::vector<double> rates;
+    for (int i = 0; i < kavl::kNumVideoProfiles; i++) {
+        const double r = kavl::videoProfile(i).symRate;
+        if (std::find(rates.begin(), rates.end(), r) == rates.end()) rates.push_back(r);
+    }
+    std::vector<std::unique_ptr<kavl::Receiver>> rx;
+    for (double r : rates) {
+        kavl::Receiver::Options o;
+        o.symRate = r;
+        o.inRate = fs;
+        o.headerOnly = true;
+        rx.push_back(std::make_unique<kavl::Receiver>(o));
+    }
+    {
+        std::lock_guard<std::mutex> sl(sMtx_);
+        st_.detecting = true;
+    }
+    const double w = 2.0 * 3.14159265358979 * offset / fs;
+    const kavl::cf step(static_cast<float>(std::cos(w)), static_cast<float>(std::sin(w)));
+    kavl::cf ph(1, 0);
+    for (;;) {
+        std::vector<kavl::cf> chunk;
+        {
+            std::unique_lock<std::mutex> lk(qMtx_);
+            qCv_.wait(lk, [&] { return quit_ || !q_.empty(); });
+            if (quit_) return -1;
+            chunk = std::move(q_.front());
+            q_.pop_front();
+            queued_ -= static_cast<long>(chunk.size());
+        }
+        if (offset != 0.0) {
+            for (size_t i = 0; i < chunk.size(); i++) {
+                chunk[i] *= ph;
+                ph *= step;
+                if ((i & 4095) == 0) ph /= std::abs(ph);
+            }
+        }
+        std::vector<int> found(rates.size(), -1);   // the modcod each detector saw
+        std::vector<std::thread> th;
+        for (size_t k = 0; k < rates.size(); k++)
+            th.emplace_back([&, k] {
+                for (const auto& f : rx[k]->push(chunk.data(), chunk.size()))
+                    if (f.mc) found[k] = f.mc->id;
+            });
+        for (auto& t : th) t.join();
+        for (size_t k = 0; k < rates.size(); k++) {
+            if (found[k] < 0) continue;
+            int best = -1;
+            for (int i = 0; i < kavl::kNumVideoProfiles; i++) {
+                const auto& vp = kavl::videoProfile(i);
+                if (vp.symRate != rates[k]) continue;
+                if (best < 0 || vp.modcod == found[k]) best = i;   // the profile with that modcod; else any with the rate
+            }
+            std::lock_guard<std::mutex> sl(sMtx_);
+            st_.detecting = false;
+            return best;
+        }
+    }
+}
+
 void RxEngine::worker(int profile, double fs, double offset) {
+    if (profile < 0) profile = detect(fs, offset);
+    if (profile < 0) return;
+    {
+        std::lock_guard<std::mutex> sl(sMtx_);
+        st_.profile = profile;
+    }
     const kavl::VideoProfile& vp = kavl::videoProfile(profile);
     kavl::Receiver::Options o;
     o.symRate = vp.symRate;

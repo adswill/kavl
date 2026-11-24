@@ -56,11 +56,11 @@ open build/KAVL.app
 **Receive**
 
 1. Choose the source: IQ file, RTL-SDR or HackRF.
-2. Choose the profile the transmission uses.
+2. Leave the profile on Auto: the app finds the profile of the signal in about a second. Or choose it.
 3. For a radio, set the frequency and the gain. For a file, open it or drop it on the window; a frequency in the file name (`..._433000000Hz.wav`) is read.
 4. Press Start.
 
-The picture plays after the first key frame and one second of buffer. The left panel shows the lock, the link margin above the profile's threshold, the constellation, the signal-to-noise ratio, the frequency and clock offsets and the code words received.
+The picture plays after the first key frame and two seconds of buffer. Record IQ saves what the receiver gets as an IQ `.wav` in Documents/KAVL. The left panel shows the lock, the link margin above the profile's threshold, the constellation, the signal-to-noise ratio, the frequency and clock offsets and the code words received.
 
 | Key | Action |
 |---|---|

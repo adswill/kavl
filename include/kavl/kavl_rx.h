@@ -53,6 +53,7 @@ public:
         bool ddPass = true;
         int pilotSmooth = 8;        // pilot gains are averaged over +-pilotSmooth pilots (wider: less noise in the estimate, slower phase tracking)
         int ddWindow = 12;          // decision-directed gain: least squares over +-ddWindow symbols
+        bool headerOnly = false;    // stop after the header (finding the profile of a signal): blocks stay empty
     };
     Receiver();
     explicit Receiver(const Options& o);
