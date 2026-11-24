@@ -205,7 +205,9 @@ bool TxEngine::start(const Dest& d) {
         st_.sampleRate = rate;
         st_.payloadMbps = kavl::netBitRate(*kavl::modcod(vp.modcod), vp.symRate) / 1e6;
         st_.programmeSec = programmeMs_ / 1000.0;
-        st_.message = std::string(live_ ? "Live: " : "") + (d.toFile ? "writing " + d.path : "transmitting");
+        st_.message = d.toFile ? (live_ ? "Live, writing " : "Writing ") + d.path
+                             : d.loopback ? (live_ ? "Live, sending to this Mac's receiver" : "Sending to this Mac's receiver")
+                                          : (live_ ? "Live, on the air" : "On the air");
     }
     running_ = true;
     txTh_ = std::thread([this, d] { modulateLoop(d); });

@@ -539,7 +539,7 @@ void drawVideo(App& a, ImVec2 size, bool hint) {
     ImGui::InvisibleButton("##video", size);
     const bool hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.videoOnly = !a.videoOnly;
-    if (hint && ImGui::IsItemHovered() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) ImGui::SetItemTooltip("Double-click or F: video only. Esc: back. F11: full screen. P: own window.");
+    if (hint && ImGui::IsItemHovered() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) ImGui::SetItemTooltip("Double-click or F: video only. Esc: back. F11: full screen. P: Own window.");
     if (!showing) pictureEmptyState(a, p0, size);
     if (hovered || a.popout.isOpen()) {   // the pop-out button, top right of the picture
         const ImVec2 after = ImGui::GetCursorScreenPos();
@@ -597,22 +597,22 @@ void radioSettings(App& a) {
             ImGui::SetNextItemWidth(-1);
             ImGui::InputInt("##port", &a.rtl.port, 0);
         } else {
-            ImGui::SetNextItemWidth(-28);
+            ImGui::SetNextItemWidth(-70);
             if (a.rtlDevs.empty()) ImGui::TextDisabled("No RTL-SDR found");
             else ImGui::Combo("##rtldev", &a.rtlDev, [](void* d, int i) { return (*static_cast<std::vector<RadioDevice>*>(d))[static_cast<size_t>(i)].label.c_str(); },
                               &a.rtlDevs, static_cast<int>(a.rtlDevs.size()));
             ImGui::SameLine();
-            if (ImGui::Button("R##refr")) refreshDevices(a);
+            if (ImGui::Button("Rescan##refr", ImVec2(-1, 0))) refreshDevices(a);
             ImGui::SetItemTooltip("Look for radios again");
             if (findRtlTcp().empty()) ImGui::TextColored(pal::warnAmber(), "rtl_tcp missing: brew install librtlsdr");
         }
     } else {
-        ImGui::SetNextItemWidth(-28);
+        ImGui::SetNextItemWidth(-70);
         if (a.hrfDevs.empty()) ImGui::TextDisabled("No HackRF found");
         else ImGui::Combo("##hrfdev", &a.hrfDev, [](void* d, int i) { return (*static_cast<std::vector<RadioDevice>*>(d))[static_cast<size_t>(i)].label.c_str(); },
                           &a.hrfDevs, static_cast<int>(a.hrfDevs.size()));
         ImGui::SameLine();
-        if (ImGui::Button("R##refh")) refreshDevices(a);
+        if (ImGui::Button("Rescan##refh", ImVec2(-1, 0))) refreshDevices(a);
         ImGui::SetItemTooltip("Look for radios again");
     }
     if (run) ImGui::EndDisabled();
@@ -734,7 +734,7 @@ void receivePanel(App& a, float w, float h) {
         }
         const double margin = st.esn0 - thresholdDb(st.mc);
         char lbl[64];
-        std::snprintf(lbl, sizeof(lbl), locked ? "%+.1f dB margin" : "margin -", margin);
+        std::snprintf(lbl, sizeof(lbl), locked ? "%+.1f dB margin" : "margin \xE2\x80\x93", margin);
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, margin < 1 ? pal::badRed() : margin < 3 ? pal::warnAmber() : pal::okGreen());
         ImGui::ProgressBar(locked ? static_cast<float>(std::clamp(margin / 10.0, 0.0, 1.0)) : 0.f, ImVec2(-1, 0), lbl);
         ImGui::SetItemTooltip("Es/N0 above what this mode needs. Under 3 dB: close to dropping out");
@@ -746,13 +746,25 @@ void receivePanel(App& a, float w, float h) {
         }
         ImGui::PopStyleColor();
         if (run && st.frames > 0) drawConstellation(a.rx.constellation(), std::min(w - 18, 200.f));   // only with a signal to show
-        valueRow(a, "Mode", "%s", st.mc ? st.mc->name : "-");
-        valueRow(a, "Es/N0", "%.1f dB", st.esn0);
-        valueRow(a, "MER", "%.1f dB", st.mer);
-        valueRow(a, "Offset", "%.0f Hz", st.cfo);
-        valueRow(a, "Clock", "%.1f ppm", st.ppm);
-        valueRow(a, "Code words", "%ld/%ld", st.codeWordsOk, st.codeWords);
-        valueRow(a, "Lost", "%ld", st.lost);
+        // the Dash rule: only what is being measured shows a number
+        const char* dash = "\xE2\x80\x93";
+        const bool had = run && st.frames > 0;
+        valueRow(a, "Mode", "%s", locked && st.mc ? st.mc->name : dash);
+        if (locked) {
+            valueRow(a, "Es/N0", "%.1f dB", st.esn0);
+            valueRow(a, "MER", "%.1f dB", st.mer);
+            valueRow(a, "Offset", "%.0f Hz", st.cfo);
+            valueRow(a, "Clock", "%.1f ppm", st.ppm);
+        } else {
+            for (const char* k : {"Es/N0", "MER", "Offset", "Clock"}) valueRow(a, k, "%s", dash);
+        }
+        if (had) {
+            valueRow(a, "Code words", "%ld/%ld", st.codeWordsOk, st.codeWords);
+            valueRow(a, "Lost", "%ld", st.lost);
+        } else {
+            valueRow(a, "Code words", "%s", dash);
+            valueRow(a, "Lost", "%s", dash);
+        }
         if (st.fec > 0) valueRow(a, "Protection", "%s, %ld rebuilt", st.fec == 1 ? "1 in 16" : st.fec == 2 ? "2 in 32" : "1 in 8", st.rebuilt);
         if (st.restarts > 0) valueRow(a, "Restarts", "%ld", st.restarts);
     }
@@ -760,19 +772,25 @@ void receivePanel(App& a, float w, float h) {
     const bool progOpen = ImGui::CollapsingHeader("Programme", ImGuiTreeNodeFlags_DefaultOpen);
     ImGui::PopFont();
     if (progOpen) {
-        valueRow(a, "Video", ps.srcW ? "%dx%d %.0f fps" : "-", ps.srcW, ps.srcH, ps.fps);
-        valueRow(a, "Video rate", "%.2f Mbit/s", ps.videoKbps / 1e3);
-        valueRow(a, "Buffer", "%.1f s", ps.bufferSec);
+        const char* dash = "\xE2\x80\x93";
+        if (run && ps.srcW) valueRow(a, "Video", "%dx%d %.0f fps", ps.srcW, ps.srcH, ps.fps);
+        else valueRow(a, "Video", "%s", dash);
+        if (run && ps.videoKbps > 0) valueRow(a, "Video rate", "%.2f Mbit/s", ps.videoKbps / 1e3);
+        else valueRow(a, "Video rate", "%s", dash);
+        if (ps.playing) valueRow(a, "Buffer", "%.1f s", ps.bufferSec);
+        else valueRow(a, "Buffer", "%s", dash);
         ImGui::SetItemTooltip("How far ahead of the picture on screen the received data is");
         if (ps.delaySec >= 0) {
             valueRow(a, "Delay", "%.2f s", ps.delaySec);
             ImGui::SetItemTooltip("From the transmitter's encoder to this screen (needs both clocks to agree: the same Mac, or synced Macs)");
         }
-        valueRow(a, "Sound", ps.soundDevice ? "%ld packets" : "no sound device", ps.audioPackets);
+        if (!ps.soundDevice) valueRow(a, "Sound", "%s", "no sound output found");
+        else if (run && ps.audioPackets > 0) valueRow(a, "Sound", "%ld packets", ps.audioPackets);
+        else valueRow(a, "Sound", "%s", dash);
         ImGui::SetNextItemWidth(-1);
         if (ImGui::SliderFloat("##vol", &a.volume, 0.f, 1.5f, "Volume %.2f")) a.player.setVolume(a.volume);
         ImGui::SetItemTooltip("Sound volume");
-        if (st.droppedSec > 0.01) ImGui::TextColored(pal::badRed(), "Decoder behind: %.1f s dropped", st.droppedSec);
+        if (st.droppedSec > 0.01) ImGui::TextColored(pal::badRed(), "The decoder fell behind: %.1f s of signal skipped (this Mac is too busy)", st.droppedSec);
         if (run && st.speed > 0) ImGui::TextDisabled("Decoder %.2fx real time", st.speed);
     }
     ImGui::EndChild();
@@ -894,6 +912,15 @@ void transmitPanel(App& a, float w, float h) {
         const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty());
         if (!txRun) {
             if (actionButton(a, a.txDest != 1 ? "Start transmitting" : "Write the IQ file", Action::Primary, canStart)) startTx(a);
+            if (!canStart) {   // say what is missing
+                const char* why = a.txSource == 0 && a.videoPath.empty()               ? "Choose a video first."
+                                  : a.txSource == 0 && a.tx.preparing()                ? "Encoding the video; this starts when it is ready."
+                                  : a.txSource == 0 && !fileReady                      ? "Encode the video for this profile first."
+                                  : a.txSource == 1 && a.cameras.empty()               ? "No camera found."
+                                  : a.txDest == 1 && a.txFilePath.empty()              ? "Choose where to save the IQ file (Save as...)."
+                                                                                       : "";
+                if (*why) ImGui::TextDisabled("%s", why);
+            }
             if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec))
                 ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
         } else {
@@ -907,23 +934,33 @@ void transmitPanel(App& a, float w, float h) {
     const auto ts = a.tx.status();
     if (a.tx.running() || ts.frames > 0 || !ts.message.empty()) {
         ImGui::PushFont(a.bold);
-        const bool airOpen = ImGui::CollapsingHeader("On air", ImGuiTreeNodeFlags_DefaultOpen);
+        // what the transmitter is doing: on the air (HackRF), sending to this Mac's receiver, or writing a file
+        const char* title = a.txDest == 0 ? "On air###txstate" : a.txDest == 2 ? "Loopback###txstate" : "Writing###txstate";
+        const bool airOpen = ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_DefaultOpen);
         ImGui::PopFont();
         if (airOpen) {
             if (!ts.message.empty()) ImGui::TextWrapped("%s", ts.message.c_str());
-            valueRow(a, "On air", "%.1f s", ts.seconds);
+            valueRow(a, a.txDest == 1 ? "Written" : "Running", "%.1f s", ts.seconds);
             if (ts.programmeSec > 0) valueRow(a, "Programme", "%.1f s, loops %ld", ts.programmeSec, ts.loops);
             valueRow(a, "Frames", "%ld", ts.frames);
             valueRow(a, "Sample rate", "%.3f Msps", ts.sampleRate / 1e6);
             valueRow(a, "Payload", "%.3f Mbit/s", ts.payloadMbps);
-            if (ts.underruns) ImGui::TextColored(pal::warnAmber(), "Radio waited for data %ld times", ts.underruns);
+            if (ts.underruns) ImGui::TextColored(pal::warnAmber(), "The radio ran out of data %ld times (this Mac was too busy to keep up)", ts.underruns);
             if (a.tx.live()) {
                 const auto ls = a.tx.liveStatus();
                 valueRow(a, "Encoder", "%.1f fps, %.2f Mbit/s", ls.fps, ls.kbps / 1e3);
                 valueRow(a, "Sound", "%ld packets", ls.audioPackets);
                 if (ls.captureW) valueRow(a, "Camera", "%dx%d at %.0f fps", ls.captureW, ls.captureH, ls.captureFps);
                 const std::string le = a.tx.liveError();
-                if (!le.empty() && ls.videoUnits == 0) ImGui::TextColored(pal::warnAmber(), "ffmpeg: %s", le.c_str());   // notices are harmless once video flows
+                if (!le.empty() && ls.videoUnits == 0) {   // notices are harmless once video flows
+                    ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
+                    ImGui::TextWrapped("No picture from the live encoder yet.%s", a.txSource == 1 ? " Check that KAVL may use the camera and microphone (System Settings, Privacy & Security)." : "");
+                    ImGui::PopStyleColor();
+                    ImGui::TextDisabled("ffmpeg said:");
+                    ImGui::PushFont(a.mono);
+                    ImGui::TextWrapped("%s", le.c_str());
+                    ImGui::PopFont();
+                }
             }
         }
     }
@@ -964,7 +1001,7 @@ void statusBar(App& a) {
         ImGui::Dummy(ImVec2(ts.x + 16, ts.y));
         ImGui::SameLine(0, 24);
     } else {
-        part(pal::accent(), "TX %s %.4f MHz%s", a.txDest == 1 ? "writing a file" : "loopback", a.txFreqMHz, a.tx.live() ? "  live" : "");
+        part(pal::accent(), "TX %s %.4f MHz%s", a.txDest == 1 ? "writing a file" : "Loopback", a.txFreqMHz, a.tx.live() ? "  live" : "");
     }
     if (ps.delaySec >= 0) part(pal::accent(), "Delay %.2f s", ps.delaySec);
     if (a.rx.running() && st.speed > 0) part(st.speed < 1.0 ? pal::badRed() : pal::grey(), "Decoder %.2fx", st.speed);
@@ -1055,7 +1092,7 @@ void frame(App& a) {
             ImGui::Separator();
             if (ImGui::MenuItem("Video only", "F", a.videoOnly)) a.videoOnly = !a.videoOnly;
             if (ImGui::MenuItem("Full screen", "F11", a.fullscreen)) a.fullscreen = !a.fullscreen, glfwPostEmptyEvent();
-            if (ImGui::MenuItem("Video in its own window", "P", a.popout.isOpen())) a.wantPopout = !a.popout.isOpen();
+            if (ImGui::MenuItem("Own window", "P", a.popout.isOpen())) a.wantPopout = !a.popout.isOpen();
             ImGui::Separator();
             ImGui::MenuItem("Waterfall", nullptr, &a.specView.waterfall);
             ImGui::EndMenu();
