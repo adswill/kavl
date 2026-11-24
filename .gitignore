@@ -4,3 +4,4 @@ build/
 *.ogg
 *.mkv
 .DS_Store
+build-ffmpeg/

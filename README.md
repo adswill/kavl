@@ -35,11 +35,11 @@ Video is AV1, sound is Opus stereo at 48 kHz and 112 kbit/s. The video budget of
 macOS 12 or later (built and tested on Apple silicon).
 
 ```bash
-brew install cmake ninja glfw dav1d opus hackrf libusb
+brew install cmake ninja glfw dav1d opus hackrf libusb svt-av1
 ```
 
 - RTL-SDR dongles need `rtl_tcp`: `brew install librtlsdr`.
-- Transmitting a video or the camera needs `ffmpeg` with SVT-AV1 and Opus: `brew install ffmpeg`.
+- KAVL.app carries its own FFmpeg (LGPL build, for encoding the video file or the camera) and all its libraries, so a built app runs on a Mac without Homebrew.
 
 ## Build
 
@@ -49,7 +49,15 @@ cmake --build build
 open build/KAVL.app
 ```
 
-`-DKAVL_BUILD_APP=OFF` builds only the library, the tools and the tests.
+To put FFmpeg in the app, build it once from the FFmpeg 8.0 source (https://ffmpeg.org/releases/ffmpeg-8.0.tar.xz) before building the app:
+
+```bash
+tools/build_ffmpeg.sh /path/to/ffmpeg-8.0
+```
+
+Each app build then copies `ffmpeg`, `ffprobe` and every library into KAVL.app and signs it ad hoc (`tools/bundle_app.sh`). Without that step the app uses a Homebrew `ffmpeg`.
+
+`-DKAVL_BUILD_APP=OFF` builds only the library, the tools and the tests. `-DKAVL_BUNDLE=OFF` skips the bundling.
 
 ## Use
 

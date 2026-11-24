@@ -3,7 +3,7 @@
 
 // KAVL app: live programme. The ffmpeg program captures a camera and a microphone (macOS AVFoundation), or makes a test pattern with a tone, and
 // encodes AV1 (SVT-AV1, low delay, constant bit rate) and Opus in real time into two pipes; this reads them as they come (IVF and Ogg streams)
-// and hands out packets with their times. ffmpeg is a separate program (it is not part of KAVL).
+// and hands out packets with their times. ffmpeg is a separate program (LGPL, bundled in KAVL.app; it is not part of KAVL).
 #pragma once
 #include "kavl/kavl_av.h"
 
@@ -13,6 +13,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+// a helper program: the copy bundled in KAVL.app first, then Homebrew; the bare name when none is found
+std::string findTool(const char* name);
 
 struct CaptureDevice {
     int index = 0;

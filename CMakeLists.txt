@@ -3,7 +3,8 @@
 #
 # KAVL: the library (src, include), the command-line tools (tools), the tests (tests) and the app (app, macOS: KAVL.app).
 #   cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build
-# The app needs (Homebrew): glfw dav1d opus hackrf libusb; at run time rtl_tcp (librtlsdr) for RTL-SDR dongles and ffmpeg for transmit encoding.
+# The app needs (Homebrew): glfw dav1d opus hackrf libusb svt-av1; at run time rtl_tcp (librtlsdr) for RTL-SDR dongles. ffmpeg is bundled when
+# tools/build_ffmpeg.sh has been run (else a Homebrew ffmpeg is used).
 cmake_minimum_required(VERSION 3.20)
 project(kavl VERSION 1.0.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
@@ -57,6 +58,11 @@ if(KAVL_BUILD_APP)
   set(KAVL_VERSION ${PROJECT_VERSION})
   configure_file(app/Info.plist.in ${CMAKE_CURRENT_BINARY_DIR}/Info.plist @ONLY)
   set_target_properties(kavl PROPERTIES OUTPUT_NAME KAVL MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_BINARY_DIR}/Info.plist)
+  # self-contained bundle: ffmpeg/ffprobe (tools/build_ffmpeg.sh, when built) and every non-system dylib copied in, signed ad hoc
+  option(KAVL_BUNDLE "Copy ffmpeg and the dylibs into KAVL.app after each build" ON)
+  if(KAVL_BUNDLE)
+    add_custom_target(kavl_bundle ALL COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tools/bundle_app.sh $<TARGET_BUNDLE_DIR:kavl> DEPENDS kavl VERBATIM)
+  endif()
   target_include_directories(kavl PRIVATE app ${IMGUI} third_party/miniaudio)
   target_compile_definitions(kavl PRIVATE KAVL_FONT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts" KAVL_VERSION="${PROJECT_VERSION}"
     GL_SILENCE_DEPRECATION)

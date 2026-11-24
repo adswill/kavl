@@ -592,7 +592,7 @@ void transmitPage(App& a, float h) {
         if (txBusy) ImGui::BeginDisabled();
         if (a.txSource == 1) {
             if (a.cameras.empty()) {
-                ImGui::TextColored(pal::warnAmber(), "No camera found (ffmpeg is needed: brew install ffmpeg).");
+                ImGui::TextColored(pal::warnAmber(), "No camera found. Check that a camera is connected and that KAVL may use it (System Settings, Privacy, Camera).");
             } else {
                 ImGui::SetNextItemWidth(260);
                 ImGui::Combo("Camera", &a.camera, [](void* d, int i) { return (*static_cast<std::vector<CaptureDevice>*>(d))[static_cast<size_t>(i)].name.c_str(); },
@@ -745,7 +745,7 @@ void aboutWindows(App& a) {
                 "libusb - LGPL 2.1 or later, linked dynamically (the system's copy).\n\n"
                 "Inter - SIL Open Font License 1.1, Copyright (c) 2016 The Inter Project Authors.\n\n"
                 "JetBrains Mono - SIL Open Font License 1.1, Copyright 2020 The JetBrains Mono Project Authors.\n\n"
-                "Separate programs the app runs, not part of it: rtl_tcp (librtlsdr, GPL 2) for RTL-SDR dongles and ffmpeg for encoding.\n\n"
+                "Separate programs the app runs, not part of it: rtl_tcp (librtlsdr, GPL 2) for RTL-SDR dongles, and FFmpeg 8.0 (LGPL 2.1, bundled; built by tools/build_ffmpeg.sh from the ffmpeg.org source) for encoding.\n\n"
                 "Full texts: THIRD_PARTY.md and the licences folder.");
         }
         ImGui::End();

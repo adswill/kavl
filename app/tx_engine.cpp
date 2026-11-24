@@ -25,15 +25,6 @@ std::string shellQuote(const std::string& s) {
     return o + "'";
 }
 
-// ffmpeg from the usual places (an app started from the Finder has a short PATH)
-std::string findTool(const char* name) {
-    for (const char* dir : {"/opt/homebrew/bin/", "/usr/local/bin/", "/usr/bin/"}) {
-        const std::string p = std::string(dir) + name;
-        if (std::filesystem::exists(p)) return p;
-    }
-    return name;
-}
-
 double probeDuration(const std::string& path) {
     const std::string cmd = shellQuote(findTool("ffprobe")) + " -v error -show_entries format=duration -of default=nw=1:nk=1 " + shellQuote(path);
     FILE* p = popen(cmd.c_str(), "r");
@@ -105,7 +96,7 @@ void TxEngine::encodeJob(std::string path, int profile, int fecIdx) {
             return;
         }
     } else {
-        say("Cannot run ffmpeg (install it with Homebrew: brew install ffmpeg)");
+        say("Cannot run ffmpeg (it comes inside KAVL.app; for a build from source run tools/build_ffmpeg.sh, or brew install ffmpeg)");
         preparing_ = false;
         return;
     }

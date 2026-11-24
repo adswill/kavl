@@ -12,18 +12,34 @@
 #include <regex>
 #include <signal.h>
 #include <fcntl.h>
+#include <mach-o/dyld.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 extern char** environ;
 
+std::string findTool(const char* name) {
+    // the copy inside KAVL.app first (Contents/MacOS, next to the app), then Homebrew (an app started from the Finder has a short PATH)
+    char buf[4096];
+    uint32_t sz = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) == 0) {
+        std::error_code ec;
+        const auto own = std::filesystem::weakly_canonical(buf, ec).parent_path() / name;
+        if (!ec && std::filesystem::exists(own) && own.filename() != std::filesystem::path(buf).filename()) return own.string();
+    }
+    for (const char* dir : {"/opt/homebrew/bin/", "/usr/local/bin/", "/usr/bin/"}) {
+        const std::string p = std::string(dir) + name;
+        if (std::filesystem::exists(p)) return p;
+    }
+    return name;
+}
+
 namespace {
 
 std::string ffmpegPath() {
-    for (const char* p : {"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"})
-        if (std::filesystem::exists(p)) return p;
-    return "";
+    const std::string p = findTool("ffmpeg");
+    return p.find('/') == std::string::npos ? std::string() : p;
 }
 
 uint32_t le32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24); }
@@ -94,7 +110,7 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
     const std::string ff = ffmpegPath();
     if (ff.empty()) {
         std::lock_guard<std::mutex> lk(m_);
-        err_ = "ffmpeg was not found. Install it with: brew install ffmpeg";
+        err_ = "ffmpeg was not found (it comes inside KAVL.app; for a build from source run tools/build_ffmpeg.sh, or brew install ffmpeg)";
         return false;
     }
     int vp[2], ap[2];
