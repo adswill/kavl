@@ -144,7 +144,11 @@ KAVL Source Licence 1.0: you may read, build and run it for your own use and sen
 ## Testing
 
 ```bash
-ctest --test-dir build --output-on-failure
+tools/check.sh
 ```
 
-`KAVL_MEASURE=1 build/test_kavl_thresholds` measures the threshold of every modcod (slow).
+One command, about 15 s: build, the fast tests (in parallel), and a 10 s run of the app itself, hidden, sending its test pattern to its own receiver. It fails when the receiver does not lock, no picture comes, or the delay is above 1.5 s (`MAX_DELAY`, `SECS`, `PROFILE` change that; `SKIP_APP=1` for build and tests only).
+
+`ctest --test-dir build -j4 --output-on-failure` runs the tests alone. `KAVL_MEASURE=1 build/test_kavl_thresholds` measures the threshold of every modcod (slow).
+
+Builds use ccache when it is installed, and the app bundle (ffmpeg, libraries, signing) is only redone when something in it changed.

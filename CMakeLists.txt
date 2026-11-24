@@ -7,6 +7,12 @@
 # tools/build_ffmpeg.sh has been run (else a Homebrew ffmpeg is used).
 cmake_minimum_required(VERSION 3.20)
 project(kavl VERSION 1.0.0 LANGUAGES C CXX)
+# ccache, when installed: rebuilds after a clean or a branch switch only compile what really changed
+find_program(KAVL_CCACHE ccache)
+if(KAVL_CCACHE)
+  set(CMAKE_C_COMPILER_LAUNCHER ${KAVL_CCACHE})
+  set(CMAKE_CXX_COMPILER_LAUNCHER ${KAVL_CCACHE})
+endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)

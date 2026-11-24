@@ -8,6 +8,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FF="$ROOT/build-ffmpeg/out/bin"
 MAC="$APP/Contents/MacOS"
 FW="$APP/Contents/Frameworks"
+# nothing changed since the last bundle (the app binary as signed then, ffmpeg, the licence texts): done (saves a second on every build)
+STAMP="$APP/Contents/.bundle-stamp"
+key() { stat -f "%m:%z" "$MAC/KAVL" "$FF/ffmpeg" "$ROOT/LICENSE" "$ROOT/THIRD_PARTY.md" 2>/dev/null | tr '\n' ' '; }
+if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$(key)" ]; then
+  echo "bundle up to date"
+  exit 0
+fi
 mkdir -p "$FW" "$APP/Contents/Resources/licences"
 if [ -x "$FF/ffmpeg" ]; then
   cp -f "$FF/ffmpeg" "$FF/ffprobe" "$MAC/"
@@ -43,4 +50,5 @@ cp -f "$ROOT/THIRD_PARTY.md" "$L/THIRD_PARTY.md"
 [ -f "$ROOT/build-ffmpeg/src/COPYING.LGPLv2.1" ] && cp -f "$ROOT/build-ffmpeg/src/COPYING.LGPLv2.1" "$L/FFmpeg-COPYING.LGPLv2.1.txt"
 codesign --force --sign - "$FW"/*.dylib "$MAC"/ffmpeg "$MAC"/ffprobe 2>/dev/null || true
 codesign --force --deep --sign - "$APP"
+key > "$STAMP"
 echo "bundled:$done_libs"
