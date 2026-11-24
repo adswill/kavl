@@ -212,6 +212,20 @@ void receivePanel(App& a, float w, float h) {
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, margin < 1 ? pal::badRed() : margin < 3 ? pal::warnAmber() : pal::okGreen());
         ImGui::ProgressBar(locked ? static_cast<float>(std::clamp(margin / 10.0, 0.0, 1.0)) : 0.f, ImVec2(-1, 0), lbl);
         ImGui::SetItemTooltip("Es/N0 above what this mode needs. Under 3 dB: close to dropping out");
+        if (run && !locked && a.profile >= 0) {   // a fixed profile that does not fit what is on the air: say so
+            const double w = a.rx.signalWidthHz(), occ = kavl::occupiedHz(kavl::videoProfile(a.profile).symRate);
+            const bool txOther = a.srcKind == 3 && a.tx.running() && a.tx.profile() != a.profile;
+            if (txOther || (w > 0 && std::abs(std::log(w / occ)) > std::log(1.6))) {
+                ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
+                if (txOther)
+                    ImGui::TextWrapped("This Mac sends %s, but the receiver is set to %s: set its profile to Auto.", kavl::videoProfile(a.tx.profile()).name,
+                                       kavl::videoProfile(a.profile).name);
+                else
+                    ImGui::TextWrapped("A signal %.0f kHz wide is here, but %s is %.0f kHz wide: set the profile to Auto.", w / 1e3,
+                                       kavl::videoProfile(a.profile).name, occ / 1e3);
+                ImGui::PopStyleColor();
+            }
+        }
         if (locked && margin < 0) {
             ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
             ImGui::TextWrapped("Signal too poor for this profile. A transmitter close by often overloads: lower the TX gain, turn its amplifier off and lower "

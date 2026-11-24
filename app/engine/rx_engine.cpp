@@ -3,6 +3,7 @@
 
 // KAVL app receive engine (rx_engine.h).
 #include "rx_engine.h"
+#include "spectrum_edges.h"
 #include "kavl/kavl_fec.h"
 
 #include <chrono>
@@ -147,6 +148,7 @@ bool RxEngine::signalBand(double& widthHz, double& shiftHz) {
     int l = p, r = p;
     while (l > 0 && at(l - 1) > floorDb + 6.f) l--;
     while (r < n - 1 && at(r + 1) > floorDb + 6.f) r++;
+    signalEdges(s, l, r);
     double sw = 0, sx = 0;
     for (int i = l; i <= r; i++) {
         const double w = std::pow(10.0, (s[static_cast<size_t>(i)] - floorDb) / 10.0);
@@ -184,9 +186,12 @@ int RxEngine::detect(double fs, double offset) {
         const double w = signalWidthHz();
         if (w <= 0) return;
         std::vector<double> byFit(rates);
-        std::sort(byFit.begin(), byFit.end(), [&](double a, double b) { return std::abs(kavl::occupiedHz(a) - w) < std::abs(kavl::occupiedHz(b) - w); });
+        // nearest by ratio (12 and 24 kHz are as far apart as 400 and 800), within 30 % (a factor of 1.6 below 100 kHz, where a few spectrum
+        // bins make the width)
+        auto dist = [&](double r) { return std::abs(std::log(kavl::occupiedHz(r) / w)); };
+        std::sort(byFit.begin(), byFit.end(), [&](double a, double b) { return dist(a) < dist(b); });
         for (double r : byFit) {
-            if (cand.size() == 2 || std::abs(kavl::occupiedHz(r) - w) > 0.3 * kavl::occupiedHz(r)) break;
+            if (cand.size() == 2 || dist(r) > std::log(kavl::occupiedHz(r) < 100e3 ? 1.6 : 1.3)) break;
             cand.push_back(r);
             candLimit = std::max(candLimit, 2.2 * kavl::frameSeconds(r));
             kavl::Receiver::Options o;

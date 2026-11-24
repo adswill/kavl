@@ -29,8 +29,8 @@ void printReport(App& a, double t) {
     const auto st = a.rx.stats();
     const auto ps = a.player.status();
     const auto ts = a.tx.status();
-    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f snd=%ld restarts=%ld dropped=%.1f id=%s | tx frames=%ld underruns=%ld\n", t, st.frames,
-                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ps.audioPackets, st.restarts, st.droppedSec, st.callsign.empty() ? "-" : st.callsign.c_str(), ts.frames, ts.underruns);
+    std::printf("t=%5.1f rx frames=%ld lost=%ld profile=%d play=%d shown=%ld late=%ld buf=%.2f delay=%.2f snd=%ld restarts=%ld dropped=%.1f id=%s w=%.1f | tx frames=%ld underruns=%ld\n", t, st.frames,
+                st.lost, st.profile, ps.playing ? 1 : 0, ps.shown, ps.late, ps.bufferSec, ps.delaySec, ps.audioPackets, st.restarts, st.droppedSec, st.callsign.empty() ? "-" : st.callsign.c_str(), a.rx.signalWidthHz() / 1e3, ts.frames, ts.underruns);
     std::fflush(stdout);
 }
 

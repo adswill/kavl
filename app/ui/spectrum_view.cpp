@@ -3,6 +3,7 @@
 
 // KAVL app spectrum and waterfall (spectrum_view.h).
 #include "spectrum_view.h"
+#include "spectrum_edges.h"
 #include "settings.h"
 #include "theme.h"
 #include "kavl/kavl_phy.h"
@@ -111,8 +112,8 @@ void SpectrumView::options() {
     }
 }
 
-// Signals: runs of bins at least 8 dB above the noise floor (its 20th percentile), small gaps bridged, at least 8 kHz wide (the narrowest KAVL
-// profile is 12 kHz); the six strongest are kept.
+// Signals: runs of bins at least 8 dB above the noise floor (its 20th percentile), small gaps bridged, cut to the signal's own edges, at least
+// 8 kHz wide (the narrowest KAVL profile is 12 kHz); the six strongest are kept.
 void SpectrumView::findSignalsIn(const std::vector<float>& db, double fs) {
     found_.clear();
     const int n = static_cast<int>(db.size());
@@ -134,8 +135,9 @@ void SpectrumView::findSignalsIn(const std::vector<float>& db, double fs) {
             else gap++;
             j++;
         }
-        const int end = j - gap;   // one past the last bin above
-        if (end - i >= minBins) found_.push_back({static_cast<double>(i) / n, static_cast<double>(end) / n, static_cast<float>(sum / cnt - floorDb)});
+        int a = i, b = j - gap - 1;   // the run, then the signal's own edges in it (spectrum_edges.h)
+        signalEdges(db, a, b);
+        if (b - a + 1 >= minBins) found_.push_back({static_cast<double>(a) / n, static_cast<double>(b + 1) / n, static_cast<float>(sum / cnt - floorDb)});
         i = j;
     }
     std::sort(found_.begin(), found_.end(), [](const Found& a, const Found& b) { return a.level > b.level; });

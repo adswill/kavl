@@ -86,6 +86,7 @@ private:
     // HackRF output ring (int8 I/Q pairs)
     std::mutex ringMtx_;
     std::deque<int8_t> ring_;
+    bool primed_ = false;   // the first frame is queued: from then on an empty queue is an underrun (before it, the radio just waits)
     std::mutex stMtx_;
     std::mutex idMtx_;
     std::string stationId_;

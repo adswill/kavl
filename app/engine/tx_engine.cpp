@@ -152,7 +152,7 @@ int TxEngine::fill(uint8_t* buf, int len) {
     if (i < len) {
         std::memset(buf + i, 0, static_cast<size_t>(len - i));
         std::lock_guard<std::mutex> sl(stMtx_);
-        if (running_) st_.underruns++;
+        if (running_ && primed_) st_.underruns++;
     }
     return 0;
 }
@@ -195,6 +195,7 @@ bool TxEngine::start(const Dest& d) {
     {
         std::lock_guard<std::mutex> lk(ringMtx_);
         ring_.clear();
+        primed_ = false;
     }
     const kavl::VideoProfile& vp = kavl::videoProfile(profile_);
     const double rate = txRate(d, vp.symRate);
@@ -462,6 +463,7 @@ void TxEngine::modulateLoop(Dest d) {
                     std::lock_guard<std::mutex> lk(ringMtx_);
                     if (lowDelay || ring_.size() < ringTarget || quit_) {
                         ring_.insert(ring_.end(), b.begin(), b.end());
+                        primed_ = true;
                         break;
                     }
                 }

@@ -26,6 +26,9 @@ public:
     ~RxEngine() { stop(); }
     // profile -1: find it (one header-only detector per symbol rate on the first seconds, then the profile with that rate and modcod)
     bool start(std::unique_ptr<IqSource> src, int profile);
+    double signalWidthHz();                 // the width of what stands out of the noise where the signal should be (spectrum), 0 if nothing
+    bool signalBand(double& widthHz, double& shiftHz);   // that width and how far the signal's middle is off (spectrum); false if nothing
+    void setInvert(bool v) { invert_ = v; }   // before start: the spectrum comes mirrored (a converter with its LO above the signal)
     void stop();
     bool running() const { return running_; }
     // The radio was retuned: the receiver starts afresh (no stale tracking or samples) and, with Auto, finds the profile again.
@@ -69,8 +72,6 @@ private:
     long lostBefore_ = 0, rebuiltBefore_ = 0;   // of the demuxers before the current one
     std::atomic<bool> retune_{false};
     int detect(double fs, double offset);   // the profile of the signal, -1 when stopped first
-    double signalWidthHz();                 // the width of what stands out of the noise where the signal should be (spectrum), 0 if nothing
-    bool signalBand(double& widthHz, double& shiftHz);   // that width and how far the signal's middle is off (spectrum); false if nothing
 
     Player& player_;
     std::unique_ptr<IqSource> src_;
@@ -86,6 +87,8 @@ private:
     Stats st_;
     std::vector<kavl::cf> const_;
     std::vector<float> spec_;
+    bool invert_ = false;
+    std::vector<kavl::cf> conj_;   // the mirrored samples turned back (source thread)
     std::mutex recMtx_;
     FILE* rec_ = nullptr;
     std::string recPath_;
