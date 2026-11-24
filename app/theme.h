@@ -33,9 +33,9 @@ inline void applyTheme() {
     s.GrabRounding = 2;
     s.PopupRounding = 4;
     s.ScrollbarRounding = 4;
-    s.FramePadding = ImVec2(6, 2);
-    s.ItemSpacing = ImVec2(6, 3);
-    s.WindowPadding = ImVec2(8, 6);
+    s.FramePadding = ImVec2(8, 4);    // calm and roomy (DESIGN.md): a 4 px scale
+    s.ItemSpacing = ImVec2(8, 4);
+    s.WindowPadding = ImVec2(10, 8);
     s.CellPadding = ImVec2(5, 1);
     s.FrameBorderSize = 1;
     s.ChildBorderSize = 1;

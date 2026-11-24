@@ -456,6 +456,7 @@ void lamp(ImVec4 col) {
 }
 
 void heading(App& a, const char* t) {
+    ImGui::Dummy(ImVec2(0, 6));   // more space above a heading than below it
     ImGui::PushFont(a.bold);
     ImGui::TextColored(pal::heading(), "%s", t);
     ImGui::PopFont();
@@ -906,11 +907,15 @@ void receivePanel(App& a, float w, float h) {
         if (locked) {
             valueRow(a, "Es/N0", "%.1f dB", st.esn0);
             valueRow(a, "MER", "%.1f dB", st.mer);
+            ImGui::Dummy(ImVec2(0, 2));   // quality, then timing, then data
             valueRow(a, "Offset", "%.0f Hz", st.cfo);
             valueRow(a, "Clock", "%.1f ppm", st.ppm);
         } else {
-            for (const char* k : {"Es/N0", "MER", "Offset", "Clock"}) valueRow(a, k, "%s", dash);
+            for (const char* k : {"Es/N0", "MER"}) valueRow(a, k, "%s", dash);
+            ImGui::Dummy(ImVec2(0, 2));
+            for (const char* k : {"Offset", "Clock"}) valueRow(a, k, "%s", dash);
         }
+        ImGui::Dummy(ImVec2(0, 2));
         if (had) {
             valueRow(a, "Code words", "%ld/%ld", st.codeWordsOk, st.codeWords);
             valueRow(a, "Lost", "%ld", st.lost);
@@ -958,7 +963,8 @@ void transmitPanel(App& a, float w, float h) {
     ImGui::PushFont(a.bold);
     const bool open = ImGui::CollapsingHeader("Transmit", ImGuiTreeNodeFlags_DefaultOpen);
     ImGui::PopFont();
-    if (open) {
+    const auto& vp = kavl::videoProfile(a.txProfile);
+    if (open && !txRun) {   // what and how: set before starting; while transmitting they fold into the summary line below
         heading(a, "Programme");
         if (txBusy) ImGui::BeginDisabled();
         ImGui::SetNextItemWidth(-1);
@@ -1004,7 +1010,6 @@ void transmitPanel(App& a, float w, float h) {
             ImGui::SetItemTooltip("Frame rate of the live picture (a camera that has only 30 fps sends 30)");
             if (txBusy) ImGui::EndDisabled();
         }
-        ImGui::Spacing();
         heading(a, "Profile");
         if (txBusy) ImGui::BeginDisabled();
         ImGui::SetNextItemWidth(-1);
@@ -1013,7 +1018,6 @@ void transmitPanel(App& a, float w, float h) {
         ImGui::SetNextItemWidth(-1);
         ImGui::Combo("##txfec", &a.txFec, [](void*, int i) { return i == 0 ? "No extra protection" : kavl::fec::profileName(i); }, nullptr, kavl::fec::kNumProfiles);
         ImGui::SetItemTooltip("Parity frames: any lost frame of a group is rebuilt (a burst of interference, a fade). Costs video bits, and adds one group of delay");
-        const auto& vp = kavl::videoProfile(a.txProfile);
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
         ImGui::TextWrapped("%dx%d at %d fps: AV1 %d kbit/s + Opus 112 kbit/s, %s, %.0f kHz wide, needs about %.1f dB", vp.width, vp.height,
                            a.txSource == 0 ? vp.fps : std::min(vp.fps, a.liveFps ? 60 : 30), kavl::videoKbps(vp, a.txFec), kavl::modcod(vp.modcod)->name,
@@ -1029,19 +1033,20 @@ void transmitPanel(App& a, float w, float h) {
             ImGui::ProgressBar(a.tx.progress(), ImVec2(-1, 0));
             ImGui::TextWrapped("%s", a.tx.prepareMessage().c_str());
         }
-        ImGui::Spacing();
+    }
+    if (open) {   // where: the radio, frequency and gain stay live while transmitting
         heading(a, "Send to");
         if (txRun) ImGui::BeginDisabled();
         ImGui::SetNextItemWidth(-1);
-        ImGui::Combo("##txdest", &a.txDest, "HackRF\0IQ file (.wav)\0Loopback (this Mac's receiver)\0");
+        if (!txRun) ImGui::Combo("##txdest", &a.txDest, "HackRF\0IQ file (.wav)\0Loopback (this Mac's receiver)\0");
         ImGui::SetItemTooltip("HackRF: on the air. IQ file: for later. Loopback: straight into this Mac's receiver (Receive source: Loopback)");
-        if (a.txDest == 0 && a.hrfDevs.size() > 1) {
+        if (!txRun && a.txDest == 0 && a.hrfDevs.size() > 1) {
             ImGui::SetNextItemWidth(-1);
             ImGui::Combo("##txdev", &a.txHrfDev, [](void* d, int i) { return (*static_cast<std::vector<RadioDevice>*>(d))[static_cast<size_t>(i)].label.c_str(); },
                          &a.hrfDevs, static_cast<int>(a.hrfDevs.size()));
             ImGui::SetItemTooltip("Which HackRF sends");
         }
-        if (a.txDest == 1) {
+        if (!txRun && a.txDest == 1) {
             if (ImGui::Button("Save as...", ImVec2(-1, 0))) a.chooser.open(3, "Save the KAVL IQ file", true, "kavl_programme.wav");
             ImGui::TextWrapped("%s", a.txFilePath.empty() ? "(no file chosen)" : a.txFilePath.c_str());
         }
@@ -1058,9 +1063,11 @@ void transmitPanel(App& a, float w, float h) {
             ImGui::SetItemTooltip("HackRF transmit gain (VGA); changes at once");
             if (ImGui::Checkbox("RF amplifier (+14 dB)", &a.txAmp) && txRun) a.tx.setAmp(a.txAmp);
             ImGui::SetItemTooltip("The HackRF's RF amplifier; switch it off when the receiver is close by");
-            ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
-            ImGui::TextWrapped("Transmit only where your licence and the band plan allow it (%.0f kHz wide).", kavl::occupiedHz(vp.symRate) / 1e3);
-            ImGui::PopStyleColor();
+            if (!txRun) {   // the reminder before starting; the ON AIR band says the rest
+                ImGui::PushStyleColor(ImGuiCol_Text, pal::warnAmber());
+                ImGui::TextWrapped("Transmit only where your licence and the band plan allow it (%.0f kHz wide).", kavl::occupiedHz(vp.symRate) / 1e3);
+                ImGui::PopStyleColor();
+            }
         }
         const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec;
         const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
@@ -1123,6 +1130,15 @@ void transmitPanel(App& a, float w, float h) {
                 }
             }
         }
+    }
+    if (txRun) {   // what is being sent, in one line (the choices are locked while transmitting)
+        static const char* srcNames[] = {"Video file", "Camera", "Test pattern"};
+        const int fps = a.txSource == 0 ? vp.fps : std::min(vp.fps, a.liveFps ? 60 : 30);
+        heading(a, "Sending");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s%s, %s, %d fps, %s", srcNames[std::clamp(a.txSource, 0, 2)], a.txSource == 0 ? "" : " (live)", vp.name, fps,
+                           a.txFec == 0 ? "no extra protection" : kavl::fec::profileName(a.txFec));
+        ImGui::PopStyleColor();
     }
     ImGui::EndChild();
 }
