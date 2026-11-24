@@ -57,7 +57,7 @@ std::string TxEngine::prepareMessage() {
     return prepMsg_;
 }
 
-void TxEngine::prepare(const std::string& videoPath, int profile, int fecIdx) {
+void TxEngine::prepare(const std::string& videoPath, int profile, int fecIdx, const std::string& overlay, const std::string& overlaySig) {
     if (preparing_ || running_) return;
     if (prepTh_.joinable()) prepTh_.join();
     ready_ = false;
@@ -65,10 +65,11 @@ void TxEngine::prepare(const std::string& videoPath, int profile, int fecIdx) {
     preparing_ = true;
     profile_ = profile;
     fec_ = fecIdx;
-    prepTh_ = std::thread([this, videoPath, profile, fecIdx] { encodeJob(videoPath, profile, fecIdx); });
+    overlaySig_ = overlaySig;
+    prepTh_ = std::thread([this, videoPath, profile, fecIdx, overlay] { encodeJob(videoPath, profile, fecIdx, overlay); });
 }
 
-void TxEngine::encodeJob(std::string path, int profile, int fecIdx) {
+void TxEngine::encodeJob(std::string path, int profile, int fecIdx, std::string overlay) {
     auto say = [&](const std::string& m) {
         std::lock_guard<std::mutex> lk(msgMtx_);
         prepMsg_ = m;
@@ -84,7 +85,13 @@ void TxEngine::encodeJob(std::string path, int profile, int fecIdx) {
     std::snprintf(vf, sizeof(vf), "scale=%d:%d:force_original_aspect_ratio=decrease:flags=lanczos,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,fps=%d,format=yuv420p", vp.width,
                   vp.height, vp.width, vp.height, vp.fps);
     const std::string ff = shellQuote(findTool("ffmpeg"));
-    const std::string cmd = ff + " -hide_banner -nostats -loglevel error -y -i " + shellQuote(path) + " -vf " + shellQuote(vf) + " -c:v libsvtav1 -preset " +
+    // the callsign laid over the picture: a second input and a filter graph instead of -vf
+    const std::string video = overlay.empty()
+                                  ? " -vf " + shellQuote(vf)
+                                  : " -f rawvideo -pix_fmt rgba -video_size " + std::to_string(vp.width) + "x" + std::to_string(vp.height) + " -i " + shellQuote(overlay) +
+                                        " -filter_complex " + shellQuote(std::string("[0:v]") + vf + "[base];[base][1:v]overlay=0:0:format=auto,format=yuv420p[v]") +
+                                        " -map '[v]' -map '0:a?'";
+    const std::string cmd = ff + " -hide_banner -nostats -loglevel error -y -i " + shellQuote(path) + video + " -c:v libsvtav1 -preset " +
                             std::to_string(preset) + " -b:v " + std::to_string(kbps) + "k -bufsize " + std::to_string(kbps * 3 / 2) + "k -g " +
                             std::to_string(vp.fps * 4) + " -svtav1-params lp=6:rc=1:tune=0 -c:a libopus -b:a 112k -ac 2 -ar 48000 -progress pipe:1 " +
                             shellQuote(mkv) + " 2>&1";
@@ -149,13 +156,13 @@ int TxEngine::fill(uint8_t* buf, int len) {
     return 0;
 }
 
-bool TxEngine::startLive(const Dest& d, int profile, int fecIdx, int camera, int mic, int fps) {
+bool TxEngine::startLive(const Dest& d, int profile, int fecIdx, int camera, int mic, int fps, const std::string& overlay) {
     stop();
     profile_ = profile;
     fec_ = fecIdx;
     const kavl::VideoProfile& vp = kavl::videoProfile(profile);
     // real-time AV1 is less efficient than the slow file encodes: the same budget, a softer picture
-    if (!feed_.start(camera, mic, vp.width, vp.height, std::min(vp.fps, fps), kavl::videoKbps(vp, fecIdx))) {
+    if (!feed_.start(camera, mic, vp.width, vp.height, std::min(vp.fps, fps), kavl::videoKbps(vp, fecIdx), overlay)) {
         std::lock_guard<std::mutex> sl(stMtx_);
         st_.message = feed_.error();
         return false;

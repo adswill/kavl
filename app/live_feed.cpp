@@ -147,7 +147,7 @@ void listCaptureDevices(std::vector<CaptureDevice>& cameras, std::vector<Capture
     pclose(p);
 }
 
-bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int videoKbps) {
+bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int videoKbps, const std::string& overlay) {
     stop();
     {
         std::lock_guard<std::mutex> lk(m_);
@@ -202,12 +202,22 @@ bool LiveFeed::start(int camera, int mic, int width, int height, int fps, int vi
                                  rate, "-video_size", std::to_string(cam.w) + "x" + std::to_string(cam.h), "-i",
                                  std::to_string(camera) + ":" + (mic >= 0 ? std::to_string(mic) : std::string("none"))});
     }
+    // the callsign: one more input (a still RGBA image the size of the picture), laid over the scaled picture
+    std::string vmap = "0:v";
+    std::vector<std::string> vfilter = {"-vf", vf};
+    if (!overlay.empty()) {
+        const int idx = camera < 0 ? 2 : 1;   // after the test pattern and its tone, or after the camera
+        args.insert(args.end(), {"-f", "rawvideo", "-pix_fmt", "rgba", "-video_size", std::to_string(width) + "x" + std::to_string(height), "-i", overlay});
+        vfilter = {"-filter_complex", std::string("[0:v]") + vf + "[base];[base][" + std::to_string(idx) + ":v]overlay=0:0:format=auto,format=yuv420p[v]"};
+        vmap = "[v]";
+    }
     const std::string bv = std::to_string(videoKbps) + "k";
     // SVT-AV1 real-time mode (rtc=1, CBR): it holds the bit rate (the plain low-delay CBR overshot 2x at 1440p). The slowest preset per size that
     // still runs at least twice real time on an M2 Pro (measured 1440p: preset 6 58 fps, 8 120 fps, 10 177 fps; slower = sharper).
     const long px = static_cast<long>(width) * height * fps;
     const char* preset = px <= 1920L * 1080 * 60 ? "7" : px <= 2560L * 1440 * 60 ? "8" : px <= 3840L * 2160 * 60 ? "10" : "11";
-    args.insert(args.end(), {"-map", "0:v", "-vf", vf, "-c:v", "libsvtav1", "-preset", preset, "-b:v", bv, "-g", std::to_string(fps * 2), "-svtav1-params",
+    args.insert(args.end(), vfilter.begin(), vfilter.end());
+    args.insert(args.end(), {"-map", vmap, "-c:v", "libsvtav1", "-preset", preset, "-b:v", bv, "-g", std::to_string(fps * 2), "-svtav1-params",
                              "lp=6:rtc=1:rc=2", "-bufsize", std::to_string(std::max(1, videoKbps / 4)) + "k", "-flush_packets", "1", "-f", "ivf", "pipe:3"});
     const bool sound = camera < 0 || mic >= 0;
     if (sound) {

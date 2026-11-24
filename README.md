@@ -104,6 +104,8 @@ The frequency, the gains, the amplifier, the bias tee and the ppm correction cha
 3. Choose the protection: none, 1 frame in 16 or 2 frames in 32 (6.25 % of the bits), or 1 frame in 8 (12.5 %). Any lost frame of a group is rebuilt, from a burst of interference or a fade.
 4. Choose where to send: HackRF (frequency, TX gain, amplifier), IQ file, or Loopback (into this Mac's receiver). Then start.
 
+**Callsign.** Transmit > Callsign puts your callsign into the picture you send, so every receiver and every recording shows it (station identification). Drag it on the preview to place it, drag its corner or use the mouse wheel to size it, and choose the font (the app's own, or any TTF/OTF file), the colour and a dark edge. A video file carries it from Encode for this profile; change it and encode again.
+
 The frequency, the TX gain and the amplifier change at once while transmitting. A video file repeats until you stop it. A live programme uses SVT-AV1 in real-time mode at the profile's bit rate. On an M2 Pro every profile encodes in real time, 4K120 included. The picture is softer than a slow file encode at the same bit rate. Transmit only where your licence and the band plan allow it.
 
 ## Tools

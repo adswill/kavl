@@ -23,7 +23,9 @@ class TxEngine {
 public:
     ~TxEngine();
     // encoding
-    void prepare(const std::string& videoPath, int profile, int fecIdx = 0);   // fecIdx: erasure protection (kavl_fec.h)
+    // fecIdx: erasure protection (kavl_fec.h); overlay: the callsign image (callsign.h), overlaySig what it shows (an encode must match it)
+    void prepare(const std::string& videoPath, int profile, int fecIdx = 0, const std::string& overlay = "", const std::string& overlaySig = "");
+    const std::string& overlaySignature() const { return overlaySig_; }
     bool preparing() const { return preparing_; }
     bool ready() const { return ready_; }
     float progress() const { return progress_; }
@@ -41,7 +43,7 @@ public:
     };
     bool start(const Dest& d);
     // Live: camera (or the test pattern, camera < 0) and microphone (-1 = none) encoded in real time for the profile while transmitting.
-    bool startLive(const Dest& d, int profile, int fecIdx, int camera, int mic, int fps);
+    bool startLive(const Dest& d, int profile, int fecIdx, int camera, int mic, int fps, const std::string& overlay = "");
     bool live() const { return live_; }
     LiveFeed::Status liveStatus() { return feed_.status(); }
     std::string liveError() { return feed_.error(); }
@@ -61,7 +63,8 @@ public:
     int fec() const { return fec_; }
 
 private:
-    void encodeJob(std::string path, int profile, int fecIdx);
+    void encodeJob(std::string path, int profile, int fecIdx, std::string overlay);
+    std::string overlaySig_;
     void modulateLoop(Dest d);
 
     std::thread prepTh_, txTh_, lbTh_;

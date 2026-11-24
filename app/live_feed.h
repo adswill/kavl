@@ -28,7 +28,8 @@ class LiveFeed {
 public:
     ~LiveFeed() { stop(); }
     // camera < 0: a test pattern with a 1 kHz tone (no camera needed). mic < 0: no sound from the camera side (the test pattern has its tone).
-    bool start(int camera, int mic, int width, int height, int fps, int videoKbps);
+    // overlay: a raw RGBA image of width x height laid over the picture (the callsign, callsign.h); empty = none
+    bool start(int camera, int mic, int width, int height, int fps, int videoKbps, const std::string& overlay = "");
     void stop();
     bool running() const { return running_; }
     std::string error();

@@ -7,6 +7,7 @@ KAVL's own code is under the KAVL Source Licence (`LICENSE`). These parts come f
 | Part | Licence | Where | Full text |
 |---|---|---|---|
 | Dear ImGui 1.92.2b | MIT, Copyright (c) 2014-2025 Omar Cornut | `third_party/imgui` | `third_party/imgui/LICENSE.txt` |
+| stb_truetype 1.26 (inside Dear ImGui, `imstb_truetype.h`) | public domain or MIT, Sean Barrett | `third_party/imgui/imstb_truetype.h` | the header itself |
 | miniaudio | Public domain (Unlicense) or MIT No Attribution, David Reid | `third_party/miniaudio` | end of `third_party/miniaudio/miniaudio.h` |
 | Inter 4.1 (subset) | SIL Open Font License 1.1, Copyright (c) 2016 The Inter Project Authors | `third_party/fonts` | `third_party/fonts/OFL-1.1.txt` |
 | JetBrains Mono 2.304 (subset) | SIL Open Font License 1.1, Copyright 2020 The JetBrains Mono Project Authors | `third_party/fonts` | `third_party/fonts/OFL-1.1.txt` |

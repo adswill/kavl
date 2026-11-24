@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds the ffmpeg and ffprobe that KAVL.app carries: LGPL only (no --enable-gpl, no nonfree), with just what KAVL runs:
-# camera and microphone (AVFoundation), the test pattern, the usual video files in, AV1 (SVT-AV1) and Opus out, IVF / Ogg / Matroska.
+# camera and microphone (AVFoundation), the test pattern, the usual video files in, AV1 (SVT-AV1) and Opus out, IVF / Ogg / Matroska, and the
+# callsign laid over the picture (overlay filter, a raw RGBA image KAVL draws).
 # FFmpeg's own libraries are linked in statically; libSvtAv1Enc and libdav1d stay dylibs and are bundled next to it (tools/bundle_app.sh).
 # Usage: tools/build_ffmpeg.sh /path/to/ffmpeg-8.0-source   (a clean, unconfigured tree from ffmpeg.org)
 # Output: build-ffmpeg/out/bin/{ffmpeg,ffprobe}
@@ -19,7 +20,7 @@ fi
 cd "$B/obj"
 export PKG_CONFIG_PATH="$BREW/lib/pkgconfig"
 DEC=wrapped_avframe,pcm_f32be,pcm_f64le,pcm_s24be,pcm_s32be,h264,hevc,vp8,vp9,av1,libdav1d,mpeg4,mpeg2video,mpeg1video,mjpeg,prores,h263,theora,png,rawvideo,aac,aac_latm,mp3,mp3float,mp2,opus,vorbis,flac,alac,ac3,eac3,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s32le,pcm_f32le,pcm_u8
-DEMUX=mov,matroska,ivf,ogg,avi,mpegts,mpegps,flv,mp3,aac,wav,flac,h264,hevc,obu,image2,avfoundation
+DEMUX=mov,matroska,ivf,ogg,avi,mpegts,mpegps,flv,mp3,aac,wav,flac,h264,hevc,obu,image2,avfoundation,rawvideo
 "$SRC/configure" --prefix="$B/out" \
   --disable-shared --enable-static --disable-debug --disable-doc --disable-ffplay --disable-network --disable-autodetect \
   --disable-everything --enable-pthreads --enable-zlib \
@@ -33,7 +34,7 @@ DEMUX=mov,matroska,ivf,ogg,avi,mpegts,mpegps,flv,mp3,aac,wav,flac,h264,hevc,obu,
   --enable-parser=h264,hevc,vp8,vp9,av1,mpeg4video,mpegvideo,mjpeg,aac,aac_latm,mpegaudio,opus,vorbis,flac,ac3 \
   --enable-bsfs \
   --enable-hwaccel=h264_videotoolbox,hevc_videotoolbox,vp9_videotoolbox,prores_videotoolbox,mpeg4_videotoolbox,mpeg2_videotoolbox \
-  --enable-filter=scale,pad,fps,format,aformat,aresample,null,anull,testsrc2,sine,setpts,asetpts,copy,acopy,crop,transpose,hflip,vflip,rotate,yadif,bwdif \
+  --enable-filter=scale,pad,fps,format,aformat,aresample,null,anull,testsrc2,sine,setpts,asetpts,copy,acopy,crop,transpose,hflip,vflip,rotate,yadif,bwdif,overlay \
   --extra-cflags="-I$BREW/include" --extra-ldflags="-L$BREW/lib" --pkg-config-flags=--static > "$B/configure.log" 2>&1 \
   || { tail -20 "$B/configure.log"; exit 1; }
 grep -q "#define CONFIG_GPL 0" config.h || { echo "GPL parts got enabled"; exit 1; }

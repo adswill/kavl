@@ -26,6 +26,7 @@
 #include "tx_engine.h"
 #include "video_gl.h"
 #include "video_popout.h"
+#include "callsign.h"
 #include "kavl/kavl_fec.h"
 
 #include <algorithm>
@@ -130,6 +131,12 @@ struct App {
     bool wantPopout = false, hidden = false;
     std::string narrowNote;   // which column the window is too narrow for
     float textScale = 1.f;    // View > Text size: 0.9, 1, 1.15, 1.3
+    // the callsign on the transmitted picture, and its preview (a texture of the same drawing)
+    CallsignStyle cs;
+    unsigned csTex = 0;
+    std::string csTexKey;
+    float csBox[4] = {0, 0, 0, 0};
+    int csDrag = 0;   // 0 none, 1 moving, 2 resizing
     // tuning: where it was (Cmd+Z), the last frequencies used (Recent), the undo chip after a click on the spectrum, a range note
     std::vector<double> tuneHistory, recent;   // MHz
     double chipUntil = 0, chipFromMHz = 0, freqBeforeEdit = 0, noteUntil = 0;
@@ -217,6 +224,14 @@ void loadSettings(App& a) {
     a.specView.load(c);
     a.showRx = c.flag("view.showRx", true);
     a.textScale = std::clamp(static_cast<float>(c.num("view.textScale", 1.0)), 0.9f, 1.3f);
+    a.cs.on = c.flag("tx.cs.on", false);
+    a.cs.text = c.str("tx.cs.text");
+    a.cs.font = c.str("tx.cs.font", resourceDir() + "/Inter-SemiBold.ttf");
+    a.cs.x = static_cast<float>(c.num("tx.cs.x", 0.70));
+    a.cs.y = static_cast<float>(c.num("tx.cs.y", 0.86));
+    a.cs.height = std::clamp(static_cast<float>(c.num("tx.cs.h", 0.06)), 0.02f, 0.3f);
+    for (int i = 0; i < 4; i++) a.cs.rgba[i] = static_cast<float>(c.num("tx.cs.c" + std::to_string(i), 1.0));
+    a.cs.outline = c.flag("tx.cs.outline", true);
     a.showTx = c.flag("view.showTx", true);
 }
 
@@ -264,6 +279,14 @@ void saveSettings(App& a) {
     a.specView.save(c);
     c.set("view.showRx", a.showRx);
     c.set("view.textScale", static_cast<double>(a.textScale));
+    c.set("tx.cs.on", a.cs.on);
+    c.set("tx.cs.text", a.cs.text);
+    c.set("tx.cs.font", a.cs.font);
+    c.set("tx.cs.x", static_cast<double>(a.cs.x));
+    c.set("tx.cs.y", static_cast<double>(a.cs.y));
+    c.set("tx.cs.h", static_cast<double>(a.cs.height));
+    for (int i = 0; i < 4; i++) c.set("tx.cs.c" + std::to_string(i), static_cast<double>(a.cs.rgba[i]));
+    c.set("tx.cs.outline", a.cs.outline);
     c.set("view.showTx", a.showTx);
     c.save();
 }
@@ -441,6 +464,14 @@ void startRx(App& a) {
     a.specView.clear();
 }
 
+// the callsign image for the current profile, or empty when it is off
+std::string callsignImage(const App& a) {
+    if (!a.cs.on || a.cs.text.empty()) return "";
+    const auto& vp = kavl::videoProfile(a.txProfile);
+    return writeCallsignImage(a.cs, vp.width, vp.height);
+}
+std::string callsignSig(const App& a) { return a.cs.on && !a.cs.text.empty() ? a.cs.signature() : std::string(); }
+
 void startTx(App& a) {
     TxEngine::Dest d;
     d.toFile = a.txDest == 1;
@@ -451,13 +482,13 @@ void startTx(App& a) {
     d.amp = a.txAmp;
     if (!a.hrfDevs.empty() && a.txHrfDev < static_cast<int>(a.hrfDevs.size())) d.serial = a.hrfDevs[static_cast<size_t>(a.txHrfDev)].serial;
     if (a.txSource == 0) {
-        a.tx.start(d);
+        a.tx.start(d);   // the callsign is in the encoded file already (Encode for this profile)
     } else {
         const int cam = a.txSource == 2 || a.cameras.empty() ? -1 : a.cameras[static_cast<size_t>(std::clamp(a.camera, 0, static_cast<int>(a.cameras.size()) - 1))].index;
         const int mic = a.txSource == 2 || a.microphone < 0 || a.microphone >= static_cast<int>(a.microphones.size())
                             ? -1
                             : a.microphones[static_cast<size_t>(a.microphone)].index;
-        a.tx.startLive(d, a.txProfile, a.txFec, cam, mic, a.liveFps ? 60 : 30);
+        a.tx.startLive(d, a.txProfile, a.txFec, cam, mic, a.liveFps ? 60 : 30, callsignImage(a));
     }
 }
 
@@ -979,6 +1010,8 @@ void receivePanel(App& a, float w, float h) {
     ImGui::EndChild();
 }
 
+void callsignEditor(App& a, bool locked);
+
 // ---- transmit -------------------------------------------------------------------------------------------------------------------------------------------
 void transmitPanel(App& a, float w, float h) {
     ImGui::BeginChild("##right", ImVec2(w, h), ImGuiChildFlags_Borders);
@@ -1050,7 +1083,8 @@ void transmitPanel(App& a, float w, float h) {
         ImGui::PopStyleColor();
         if (a.txSource != 0 && vp.width > 2560) ImGui::TextColored(pal::warnAmber(), "Live 4K: the real-time encoder gives a softer picture than an encoded file.");
         if (a.txSource == 0) {
-            if (ImGui::Button("Encode for this profile", ImVec2(-1, 0)) && !a.videoPath.empty()) a.tx.prepare(a.videoPath, a.txProfile, a.txFec);
+            if (ImGui::Button("Encode for this profile", ImVec2(-1, 0)) && !a.videoPath.empty())
+                a.tx.prepare(a.videoPath, a.txProfile, a.txFec, callsignImage(a), callsignSig(a));
             ImGui::SetItemTooltip("AV1 + Opus for this profile with ffmpeg (slow, best quality); once per video and profile");
         }
         if (txBusy) ImGui::EndDisabled();
@@ -1058,6 +1092,7 @@ void transmitPanel(App& a, float w, float h) {
             ImGui::ProgressBar(a.tx.progress(), ImVec2(-1, 0));
             ImGui::TextWrapped("%s", a.tx.prepareMessage().c_str());
         }
+        callsignEditor(a, txBusy);
     }
     if (open) {   // where: the radio, frequency and gain stay live while transmitting
         heading(a, "Send to");
@@ -1094,7 +1129,7 @@ void transmitPanel(App& a, float w, float h) {
                 ImGui::PopStyleColor();
             }
         }
-        const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec;
+        const bool fileReady = a.tx.ready() && a.tx.profile() == a.txProfile && a.tx.fec() == a.txFec && a.tx.overlaySignature() == callsignSig(a);
         const bool liveReady = a.txSource == 2 || (a.txSource == 1 && !a.cameras.empty());
         const bool canStart = (a.txSource == 0 ? fileReady : liveReady) && (a.txDest != 1 || !a.txFilePath.empty()) && !a.txStopping;
         if (!txRun) {
@@ -1109,8 +1144,8 @@ void transmitPanel(App& a, float w, float h) {
                                                                                        : "";
                 if (*why) ImGui::TextDisabled("%s", why);
             }
-            if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec))
-                ImGui::TextColored(pal::warnAmber(), "The profile or the protection changed: encode again.");
+            if (a.txSource == 0 && a.tx.ready() && (a.tx.profile() != a.txProfile || a.tx.fec() != a.txFec || a.tx.overlaySignature() != callsignSig(a)))
+                ImGui::TextColored(pal::warnAmber(), "The profile, protection or callsign changed: encode again.");
         } else {
             if (a.txStopping) {   // the stop runs on a thread: say so, and take no second press
                 ImGui::BeginDisabled();
@@ -1166,6 +1201,119 @@ void transmitPanel(App& a, float w, float h) {
         ImGui::PopStyleColor();
     }
     ImGui::EndChild();
+}
+
+// The callsign on the picture: the text, then a preview of the profile's picture (the received one behind it when there is one) where the
+// text is dragged into place and sized (drag the corner or use the wheel), then font, colour and outline. The preview is the same drawing
+// that goes out (callsign.h).
+void callsignEditor(App& a, bool locked) {
+    heading(a, "Callsign");
+    if (locked) ImGui::BeginDisabled();
+    ImGui::Checkbox("On the picture", &a.cs.on);
+    ImGui::SetItemTooltip("Your callsign burned into what you send: every receiver and every recording shows it (station identification)");
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%s", a.cs.text.c_str());
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::InputTextWithHint("##cstext", "Your callsign", buf, sizeof(buf))) a.cs.text = buf;
+    if (locked) ImGui::EndDisabled();
+    if (!a.cs.on) return;
+    const auto& vp = kavl::videoProfile(a.txProfile);
+    const float W = ImGui::GetContentRegionAvail().x, H = W * static_cast<float>(vp.height) / static_cast<float>(vp.width);
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    auto* dl = ImGui::GetWindowDrawList();
+    // behind it: the received picture if there is one, else a neutral grey
+    if (a.havePic && a.rx.running()) dl->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(a.video.texture())), p0, ImVec2(p0.x + W, p0.y + H));
+    else dl->AddRectFilled(p0, ImVec2(p0.x + W, p0.y + H), ImGui::GetColorU32(ImVec4(0.30f, 0.31f, 0.32f, 1)));
+    // the preview texture: drawn again only when something changed
+    const float fb = ImGui::GetIO().DisplayFramebufferScale.x;
+    const int tw = std::max(16, static_cast<int>(W * fb)), th = std::max(9, static_cast<int>(H * fb));
+    const std::string key = a.cs.signature() + "|" + std::to_string(tw) + "x" + std::to_string(th);
+    if (key != a.csTexKey) {
+        std::vector<uint8_t> img;
+        float box[4] = {0, 0, 0, 0};
+        if (renderCallsign(a.cs, tw, th, img, box)) std::copy(box, box + 4, a.csBox);
+        else std::fill(a.csBox, a.csBox + 4, 0.f);
+        if (!a.csTex) {
+            glGenTextures(1, &a.csTex);
+            glBindTexture(GL_TEXTURE_2D, a.csTex);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
+        glBindTexture(GL_TEXTURE_2D, a.csTex);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tw, th, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.data());
+        a.csTexKey = key;
+    }
+    dl->AddImage(static_cast<ImTextureID>(static_cast<intptr_t>(a.csTex)), p0, ImVec2(p0.x + W, p0.y + H));
+    dl->AddRect(p0, ImVec2(p0.x + W, p0.y + H), ImGui::GetColorU32(pal::plotBorder()));
+    // the text's box and its corner handle
+    const ImVec2 b0(p0.x + a.csBox[0] * W, p0.y + a.csBox[1] * H), b1(b0.x + a.csBox[2] * W, b0.y + a.csBox[3] * H);
+    const float hs = px(9);
+    const ImVec2 h0(b1.x - hs * 0.5f, b1.y - hs * 0.5f), h1(b1.x + hs * 0.5f, b1.y + hs * 0.5f);
+    if (locked) ImGui::BeginDisabled();
+    ImGui::InvisibleButton("##csplace", ImVec2(W, H));
+    const ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 m = io.MousePos;
+    auto inside = [&](ImVec2 q0, ImVec2 q1) { return m.x >= q0.x && m.x <= q1.x && m.y >= q0.y && m.y <= q1.y; };
+    const bool hov = ImGui::IsItemHovered();
+    if (ImGui::IsItemActivated()) {
+        if (inside(h0, h1)) a.csDrag = 2;
+        else if (inside(b0, b1)) a.csDrag = 1;
+        else {   // a click elsewhere puts the text there
+            a.cs.x = std::clamp((m.x - p0.x) / W, 0.f, 1.f);
+            a.cs.y = std::clamp((m.y - p0.y) / H, 0.f, 1.f);
+            a.csDrag = 1;
+        }
+    }
+    if (ImGui::IsItemActive() && a.csDrag == 1) {
+        a.cs.x = std::clamp(a.cs.x + io.MouseDelta.x / W, 0.f, 1.f - a.csBox[2]);
+        a.cs.y = std::clamp(a.cs.y + io.MouseDelta.y / H, 0.f, 1.f - a.csBox[3]);
+    }
+    if (ImGui::IsItemActive() && a.csDrag == 2) a.cs.height = std::clamp(a.cs.height + io.MouseDelta.y / H * 0.75f, 0.02f, 0.3f);
+    if (ImGui::IsItemDeactivated()) a.csDrag = 0;
+    if (hov && io.MouseWheel != 0.f) a.cs.height = std::clamp(a.cs.height * std::pow(1.08f, io.MouseWheel), 0.02f, 0.3f);
+    if (hov && inside(h0, h1)) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNWSE);
+    else if (hov && inside(b0, b1)) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    if (!locked && (hov || a.csDrag) && a.csBox[2] > 0) {
+        dl->AddRect(b0, b1, ImGui::GetColorU32(pal::accent(0.9f)), 0.f, 0, 1.f);
+        dl->AddRectFilled(h0, h1, ImGui::GetColorU32(pal::accent()));
+    }
+    if (hov && !a.csDrag) ImGui::SetTooltip("Drag the callsign to place it; drag its corner (or use the wheel) to size it. This is what receivers see.");
+    if (a.cs.text.empty()) {
+        const char* t = "Type your callsign above";
+        const ImVec2 ts = ImGui::CalcTextSize(t);
+        dl->AddText(ImVec2(p0.x + (W - ts.x) * 0.5f, p0.y + (H - ts.y) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), t);
+    }
+    // font, colour, outline, size
+    static const char* names[] = {"Inter", "Inter SemiBold", "JetBrains Mono", "A font file..."};
+    static const char* files[] = {"Inter-Regular.ttf", "Inter-SemiBold.ttf", "JetBrainsMono-Regular.ttf"};
+    int cur = 3;
+    for (int i = 0; i < 3; i++)
+        if (a.cs.font == resourceDir() + "/" + files[i]) cur = i;
+    std::string custom = cur == 3 ? std::filesystem::path(a.cs.font).filename().string() : std::string();
+    ImGui::SetNextItemWidth(-px(112));   // room for the colour swatch and "Edge"
+    if (ImGui::BeginCombo("##csfont", cur == 3 ? custom.c_str() : names[cur])) {
+        for (int i = 0; i < 4; i++) {
+            if (ImGui::Selectable(names[i], i == cur)) {
+                if (i < 3) a.cs.font = resourceDir() + "/" + files[i];
+                else a.chooser.open(4, "Choose a font (TTF or OTF)", false);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("The typeface of the callsign; any TrueType or OpenType file works");
+    ImGui::SameLine();
+    ImGui::ColorEdit4("##cscolour", a.cs.rgba, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreviewHalf);
+    ImGui::SetItemTooltip("Colour and see-through");
+    ImGui::SameLine();
+    ImGui::Checkbox("Edge", &a.cs.outline);
+    ImGui::SetItemTooltip("A dark edge round the letters, so they read on any picture");
+    float pct = a.cs.height * 100.f;
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##cssize", &pct, 2.f, 30.f, "Size %.1f %% of the picture height")) a.cs.height = pct / 100.f;
+    if (locked) ImGui::EndDisabled();
+    if (locked) ImGui::TextDisabled("Stop transmitting to change the callsign.");
 }
 
 // the line at the bottom: receiver, transmitter, delay, decoder speed
@@ -1260,6 +1408,7 @@ void frame(App& a) {
     }
     if (a.chooser.poll(2, picked)) a.videoPath = picked, a.txSource = 0;
     if (a.chooser.poll(3, picked)) a.txFilePath = picked;
+    if (a.chooser.poll(4, picked)) a.cs.font = picked;
     uploadPicture(a);
     updateSpectrum(a);
     takeDevices(a);
@@ -1437,6 +1586,7 @@ int main(int argc, char** argv) {
     double runFor = 0, gapStop = 0, gapStart = 0;
     int winW = 1600, winH = 950;   // --size WxH (checks at other window sizes)
     float textScaleArg = 0;        // --text-scale F (checks)
+    std::string callsignArg;       // --callsign TEXT (checks)
     int gapProfile = -1;
     std::vector<std::pair<double, double>> retunes;   // --retune T:MHz: the receive frequency at T s   // --tx-gap A:B[:P]: the loopback transmitter stops at A s and starts again at B s (with profile P)
     for (int i = 1; i < argc; i++) {
@@ -1455,6 +1605,7 @@ int main(int argc, char** argv) {
         else if (k == "--popout") popoutArg = true;
         else if (k == "--size") std::sscanf(val().c_str(), "%dx%d", &winW, &winH);
         else if (k == "--text-scale") textScaleArg = static_cast<float>(std::atof(val().c_str()));
+        else if (k == "--callsign") callsignArg = val();
         else if (k == "--run-for") runFor = std::atof(val().c_str());
         else if (k == "--tx-gap") std::sscanf(val().c_str(), "%lf:%lf:%d", &gapStop, &gapStart, &gapProfile);
         else if (k == "--retune") {   // T:MHz, may be given more than once
@@ -1488,6 +1639,8 @@ int main(int argc, char** argv) {
     if (tab == 1) app.showTx = true;   // --tab tx: the transmit column on show (both are, on the combined screen)
     app.hidden = hidden;
     if (textScaleArg > 0) app.textScale = std::clamp(textScaleArg, 0.9f, 1.3f);
+    if (!callsignArg.empty()) app.cs.on = true, app.cs.text = callsignArg;
+    if (app.cs.font.empty()) app.cs.font = resourceDir() + "/Inter-SemiBold.ttf";
     app.wantPopout = popoutArg;
     app.player.setVolume(mute ? 0.f : app.volume);
     if (mute) app.volume = 0;
@@ -1581,6 +1734,7 @@ int main(int argc, char** argv) {
     app.tx.stop();
     if (app.camTh.joinable()) app.camTh.join();
     if (shot.empty() && !hidden) saveSettings(app);
+    if (app.csTex) glDeleteTextures(1, &app.csTex);
     app.video.release();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
